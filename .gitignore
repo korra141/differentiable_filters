@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+output/
+outputs/
+train/
+wandb/
 # C extensions
 *.so
 

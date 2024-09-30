@@ -1,0 +1,45 @@
+num_examples: 126
+num_records: 1
+prefix: example_test_
+tensors_dtype:
+  image: bytes10024
+  q: float32
+  start_image: bytes7712
+  start_state: float32
+  state: float32
+  visible: float32
+tensors_ndim:
+  image: 1
+  q: 2
+  start_image: 0
+  start_state: 1
+  state: 2
+  visible: 1
+tensors_shape:
+  image:
+  - 30
+  q:
+  - 30
+  - 4
+  start_image: []
+  start_state:
+  - 4
+  state:
+  - 30
+  - 4
+  visible:
+  - 30
+tensors_shape_max:
+  image:
+  - 30
+  q:
+  - 30
+  - 4
+  start_image: []
+  start_state:
+  - 4
+  state:
+  - 30
+  - 4
+  visible:
+  - 30

@@ -1006,7 +1006,7 @@ class Context(base.PaperBaseContext):
             if num == 0:
                 log.writeheader()
 
-            non_num = [str, bool, np.str, np.bool]
+            non_num = [str, bool, np.str, bool]
 
             row = {}
             for k, v in log_dict.items():
@@ -1019,7 +1019,7 @@ class Context(base.PaperBaseContext):
         else:
             row = {}
             for k, v in log_dict.items():
-                if type(v[0]) not in [str, bool, np.str, np.bool]:
+                if type(v[0]) not in [str, bool, np.str, bool]:
                     row[k] = np.mean(v)
                     row[k + '_std'] = np.std(v)
 

@@ -269,6 +269,7 @@ class ExampleContext(base.BaseContext):
             metrics: additional metrics we might want to log for evaluation
             metric-names: the names for those metrics
         """
+        # import pdb;pdb.set_trace()
         particles, weights, states, covars, z, r, q = prediction
         seq_label, q_label, vis_label = label
 
@@ -314,6 +315,7 @@ class ExampleContext(base.BaseContext):
 
         # get the weight decay
         wd = []
+        # import pdb;pdb.set_trace()
         for la in self.layers:
             wd += la.losses
         wd = tf.add_n(wd)

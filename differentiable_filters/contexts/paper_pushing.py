@@ -1565,7 +1565,7 @@ class Context(base.PaperaseContext):
             row = {}
             for k, v in log_dict.items():
                 if k in keys and type(v[0]) not in [str, bool, np.str,
-                                                    np.bool]:
+                                                    bool]:
                     row[k] = np.mean(v)
                     row[k + '_std'] = np.std(v)
 
@@ -1605,7 +1605,7 @@ class Context(base.PaperaseContext):
         else:
             row = {}
             for k, v in log_dict.items():
-                if type(v[0]) not in [str, bool, np.str, np.bool]:
+                if type(v[0]) not in [str, bool, np.str, bool]:
                     row[k] = np.mean(v)
                     row[k + '_std'] = np.std(v)
 

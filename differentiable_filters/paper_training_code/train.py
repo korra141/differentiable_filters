@@ -1,7 +1,6 @@
 """
 Training and validation of a differentiable filter
 """
-
 # this code only works with tensorflow 1
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()

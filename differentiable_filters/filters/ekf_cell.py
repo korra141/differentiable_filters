@@ -4,7 +4,7 @@ RNN cell implementing a Differentiable Extended Kalman Filter
 
 import tensorflow as tf
 from differentiable_filters.filters import filter_cell_base as base
-
+import pdb
 
 class EKFCell(base.FilterCellBase):
     def __init__(self, context, problem, update_rate=1, debug=False):
@@ -71,7 +71,8 @@ class EKFCell(base.FilterCellBase):
         # turn off the '/rnn' name scope to improve summary logging
         with tf.name_scope(""):
             # get the inputs
-            raw_observations, actions = inputs
+            import pdb;pdb.set_trace()
+            raw_observations, actions =  inputs
             state_old, covar_old, step = states
 
             state_old = tf.reshape(state_old, [self.batch_size, self.dim_x])
@@ -86,10 +87,11 @@ class EKFCell(base.FilterCellBase):
                                        summarize=-1)]
                 print_ops += [tf.print('old covar: \n', covar_old[0],
                                        summarize=-1)]
-                print_ops += [tf.print('actions: \n', actions[0], summarize=-1)]
+                # print_ops += [tf.print('actions: \n', actions[0], summarize=-1)]
 
             ###################################################################
             # preproess the raw observations
+            # pdb.set_trace()
             z, encoding = self.context.run_sensor_model(raw_observations,
                                                         training)
 

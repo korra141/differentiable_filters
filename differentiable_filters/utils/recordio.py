@@ -333,7 +333,7 @@ def _get_tf_dtype(np_dtype_str):
 
 def _convert_np_to_features(key, value, feature):
     data_key = key + '/data'
-    if value.dtype in [np.bool, bool, np.int32, np.int64]:
+    if value.dtype in [bool, bool, np.int32, np.int64]:
         val = value.ravel().tolist()
         feature[data_key] = \
             tf.train.Feature(int64_list=tf.train.Int64List(value=val))
