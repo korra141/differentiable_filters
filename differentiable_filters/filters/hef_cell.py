@@ -75,20 +75,6 @@ class HEFCell(base.FilterCellBase):
             energy_samples_old, step = states
 
             energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
-            # covar_old = tf.reshape(covar_old, [self.batch_size, self.dim_x,
-            #                                    self.dim_x])
-
-            print_ops = []
-            # if self.debug:
-            #     print_ops += [tf.print('------------------- \n step \n ',
-            #                            tf.squeeze(step[0]))]
-            #     print_ops += [tf.print('old state: \n', state_old[0],
-            #                            summarize=-1)]
-            #     print_ops += [tf.print('old covar: \n', covar_old[0],
-            #                            summarize=-1)]
-            #     print_ops += [tf.print('actions: \n', actions[0], summarize=-1)]
-
-            ###################################################################
             # predict the next state
             process_energy_samples = self.context.process_model()
             pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
@@ -96,23 +82,13 @@ class HEFCell(base.FilterCellBase):
 
             z_pred = self.context.run_observation_model(inputs,
                                                            training=training)
-            # if self.debug:
-            #     print_ops += [tf.print('predicted state: \n', state_pred[0],
-            #                            summarize=-1)]
-            #     print_ops += [tf.print('predicted covar: \n', covar_pred[0],
-            #                            summarize=-1)]
-            #     print_ops += [tf.print('F: \n', F[0], summarize=-1)]
-            #     print_ops += [tf.print('Q: \n', Q[0], summarize=-1)]
-            #     print_ops += [tf.print('R: \n', R[0], summarize=-1)]
-            #     print_ops += [tf.print('predicted z: \n', z_pred[0],
-            #                            summarize=-1)]
 
             ###################################################################
             # update the predictions with the observations
             state_up = self._update(pred_state_eta, z_pred)
-            state = tf.reshape(state_up, [self.batch_size, -1])
-            z_pred = tf.reshape(z_pred, [self.batch_size, -1])
-            pred_state_energy = tf.reshape(pred_state_energy, [self.batch_size, -1])
+            state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
+            z_pred = tf.cast(tf.reshape(z_pred, [self.batch_size, -1]),dtype=tf.float64)
+            pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
 
 
             # the recurrent state contains the updated state estimate

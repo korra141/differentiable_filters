@@ -9,7 +9,7 @@ from differentiable_filters.contexts import base_context as base
 
 
 class S1ToyContext(base.BaseContext):
-    def __init__(self, batch_size, filter_type,grid_size,motion_noise,loss):
+    def __init__(self, batch_size, filter_type, grid_size, motion_noise, loss):
         """
         Minimal example context for the simulated disc tracking task on S1. A context
         contains problem-specific information such as the state size or process
@@ -48,7 +48,6 @@ class S1ToyContext(base.BaseContext):
         # define the state size and name the components
         self.batch_size = batch_size
 
-
         # # parameters of the process model
         self.grid_size = grid_size
         self.zeroth_freq_index = math.floor(self.grid_size / 2)
@@ -56,14 +55,11 @@ class S1ToyContext(base.BaseContext):
         self.motion_noise = motion_noise
         self.loss = loss
 
-        self.observation_model = ObservationModel(self.batch_size,self.grid_size)
-        self.process_model = ProcessModel(self.grid_size,self.step,self.motion_noise,self.batch_size)
+        self.observation_model = ObservationModel(self.batch_size, self.grid_size)
+        self.process_model = ProcessModel(self.grid_size, self.step, self.motion_noise, self.batch_size)
         self.dim_x = None
         self.dim_z = None
         self.dim_u = None
-
-
-
 
     def run_observation_model(self, state, training):
         """
@@ -82,8 +78,7 @@ class S1ToyContext(base.BaseContext):
             A layer that computes the expected observations for the input
             state and the Jacobian  of the observation model
         """
-        return self.observation_model(state,training)
-
+        return self.observation_model(state, training)
 
     ###########################################################################
     # process model
@@ -94,6 +89,7 @@ class S1ToyContext(base.BaseContext):
 
         """
         return self.process_model()
+
     ###########################################################################
     # loss functions
     ###########################################################################
@@ -112,16 +108,14 @@ class S1ToyContext(base.BaseContext):
             metric-names: the names for those metrics
         """
 
-
-
         posterior_state, z_pred, pred_state = prediction
         pose = data
 
         observation = label
 
         # make sure the pose and observations inputed are complex64
-        pose_cast = tf.cast(pose,dtype=tf.complex64)
-        observation_cast = tf.cast(observation,dtype=tf.complex64)
+        pose_cast = tf.cast(pose, dtype=tf.complex64)
+        observation_cast = tf.cast(observation, dtype=tf.complex64)
         nll_posterior = []
         nll_likelihood = []
 
@@ -130,26 +124,33 @@ class S1ToyContext(base.BaseContext):
             nll_posterior.append(self.neg_log_likelihood((posterior_state[x], pose_cast[x])))
             nll_likelihood.append(self.neg_log_likelihood((z_pred[x], observation_cast[x])))
 
-        nl_loss_posterior = tf.reduce_mean(tf.stack(nll_posterior,axis=0),axis=0)
-        nl_loss_measurement = tf.reduce_mean(tf.stack(nll_likelihood,axis=0),axis=0)
+        nl_loss_posterior = tf.reduce_mean(tf.stack(nll_posterior, axis=0), axis=0)
+        nl_loss_measurement = tf.reduce_mean(tf.stack(nll_likelihood, axis=0), axis=0)
 
-        #compute the mode of the distribution
+        # compute the mode of the distribution
         mode_pose_posterior, mean_pose_posterior = self.compute_mode_(posterior_state)
-        mode_pose_pred, mean_pose_pred= self.compute_mode_(pred_state)
+        mode_pose_pred, mean_pose_pred = self.compute_mode_(pred_state)
         mode_obs, mean_obs = self.compute_mode_(z_pred)
 
         mean_pose_posterior_s1 = self.compute_mean_S1(posterior_state)
         mean_pose_pred_s1 = self.compute_mean_S1(pred_state)
         mean_obs_s1 = self.compute_mean_S1(z_pred)
 
-        l1_norm_mean1_post = tf.reduce_mean(tf.math.abs(mean_pose_posterior - pose))
-        l1_norm_mean2_post = tf.reduce_mean(tf.math.abs(mean_pose_posterior_s1 - pose))
-        l1_norm_mean1_pred = tf.reduce_mean(tf.math.abs(mean_pose_pred - pose))
-        l1_norm_mean2_pred = tf.reduce_mean(tf.math.abs(mean_pose_pred_s1 - pose))
-        l1_norm_mean1_meas = tf.reduce_mean(tf.math.abs(mean_obs - observation))
-        l1_norm_mean2_meas = tf.reduce_mean(tf.math.abs(mean_obs_s1 - observation))
+        abs_mean_pose_posterior = tf.math.abs(mean_pose_posterior - pose)
+        abs_mean_pose_posterior_s1 = tf.math.abs(mean_pose_posterior_s1 - pose)
+        abs_mean_pose_pred = tf.math.abs(mean_pose_pred - pose)
+        abs_mean_pose_pred_s1 = tf.math.abs(mean_pose_pred_s1 - pose)
+        abs_mean_obs = tf.math.abs(mean_obs - observation)
+        abs_mean_obs_s1 = tf.math.abs(mean_obs_s1 - observation)
 
-        diff_mode_pose_posterior  = tf.math.abs(mode_pose_posterior - pose)
+        mae_mean1_post = tf.reduce_mean(abs_mean_pose_posterior)
+        mae_mean2_post = tf.reduce_mean(abs_mean_pose_posterior_s1)
+        mae_mean1_pred = tf.reduce_mean(abs_mean_pose_pred)
+        mae_mean2_pred = tf.reduce_mean(abs_mean_pose_pred_s1)
+        mae_mean1_meas = tf.reduce_mean(abs_mean_obs)
+        mae_mean2_meas = tf.reduce_mean(abs_mean_obs_s1)
+
+        diff_mode_pose_posterior = tf.math.abs(mode_pose_posterior - pose)
         diff_mode_pose_pred = tf.math.abs(mode_pose_pred - pose)
         diff_mode_obs = tf.math.abs(mode_obs - observation)
 
@@ -157,10 +158,16 @@ class S1ToyContext(base.BaseContext):
         ate_mode_pred = self.average_traj_error(diff_mode_pose_pred)
         ate_mode_meas = self.average_traj_error(diff_mode_obs)
 
-        l1_norm_mode_post = tf.reduce_mean(tf.math.abs(diff_mode_pose_posterior))
-        l1_norm_mode_pred = tf.reduce_mean(tf.math.abs(diff_mode_pose_pred))
-        l1_norm_mode_meas = tf.reduce_mean(tf.math.abs(diff_mode_obs))
+        ate_mean1_post = self.average_traj_error(abs_mean_pose_posterior)
+        ate_mean2_post = self.average_traj_error(abs_mean_pose_posterior_s1)
+        ate_mean1_pred = self.average_traj_error(abs_mean_pose_pred)
+        ate_mean2_pred = self.average_traj_error(abs_mean_pose_pred_s1)
+        ate_mean1_meas = self.average_traj_error(abs_mean_obs)
+        ate_mean2_meas = self.average_traj_error(abs_mean_obs_s1)
 
+        mae_mode_post = tf.reduce_mean(tf.math.abs(diff_mode_pose_posterior))
+        mae_mode_pred = tf.reduce_mean(tf.math.abs(diff_mode_pose_pred))
+        mae_mode_meas = tf.reduce_mean(tf.math.abs(diff_mode_obs))
 
         # total_loss = nl_loss_posterior
 
@@ -171,37 +178,42 @@ class S1ToyContext(base.BaseContext):
         #     wd += la.losses
         # wd = tf.add_n(wd)
 
-        if loss == "nl_measurement":
+        if self.loss == "nl_measurement":
             total = nl_loss_measurement
         else:
             total = nl_loss_posterior
         # total = tf.reduce_mean(mse_obs) + wd
 
-        metrics = [total, nl_loss_posterior, nl_loss_measurement,ate_mode_post, ate_mode_pred , ate_mode_meas,l1_norm_mode_post,l1_norm_mode_pred,l1_norm_mode_meas,l1_norm_mean1_post,l1_norm_mean2_post,l1_norm_mean1_pred,l1_norm_mean2_pred,l1_norm_mean1_meas,l1_norm_mean2_meas]
-        metric_names = ['total','nl_loss_posterior', 'nl_loss_measurement','ate_mode_post', 'ate_mode_pred' , 'ate_mode_meas','l1_norm_mode_post','l1_norm_mode_pred','l1_norm_mode_meas','l1_norm_mean1_post','l1_norm_mean2_post','l1_norm_mean1_pred','l1_norm_mean2_pred','l1_norm_mean1_meas','l1_norm_mean2_meas']
+        metrics = [total, nl_loss_posterior, nl_loss_measurement, ate_mode_post, ate_mode_pred, ate_mode_meas,
+                   ate_mean1_post, ate_mean2_post, ate_mean1_pred, ate_mean2_pred,
+                   ate_mean1_meas, ate_mean2_meas,
+                   mae_mode_post, mae_mode_pred, mae_mode_meas, mae_mean1_post, mae_mean2_post, mae_mean1_pred,
+                   mae_mean2_pred, mae_mean1_meas, mae_mean2_meas]
+        metric_names = ["total", "nl_loss_posterior", "nl_loss_measurement", "ate_mode_post", "ate_mode_pred",
+                        "ate_mode_meas",
+                        "ate_mean1_post", "ate_mean2_post", "ate_mean1_pred", "ate_mean2_pred",
+                        "ate_mean1_meas", "ate_mean2_meas",
+                        "mae_mode_post", "mae_mode_pred", "mae_mode_meas", "mae_mean1_post", "mae_mean2_post",
+                        "mae_mean1_pred", "mae_mean2_pred", "mae_mean1_meas", "mae_mean2_meas"]
         return total, metrics, metric_names
 
-
-    def compute_mean_S1(self,energy_samples):
+    def compute_mean_S1(self, energy_samples):
         dim = energy_samples.shape[1]
         tensor_start = tf.constant(0, dtype=tf.float64)
         tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
-        poses = tf.linspace(tensor_start, tensor_stop, self.batch_size * dim * self.grid_size + 1)[:-1]
-        poses_ = tf.reshape(poses, [self.batch_size, dim, self.grid_size])
+        poses = tf.broadcast_to(tf.linspace(tensor_start, tensor_stop, self.grid_size + 1)[:-1],[1,1,self.grid_size])
+        poses_ = tf.tile(poses, [self.batch_size, dim, 1])
         maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=2), 2)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
         ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, :, 0] / math.pi)), 2) + maximum
-        prob = tf.cast(tf.math.exp(energy_samples - ln_z_),dtype=tf.float64)
-        mean = tfp.math.trapz(prob*poses_,poses_,axis=-1)
-        return tf.expand_dims(mean,2)
+        prob = tf.cast(tf.math.exp(energy_samples - ln_z_), dtype=tf.float64)
+        mean = tfp.math.trapz(prob * poses_, poses_, axis=-1)
+        return tf.expand_dims(mean, 2)
 
-
-
-
-    def average_traj_error(self,trajector_error):
+    def average_traj_error(self, trajector_error):
         return tf.math.sqrt(tf.math.reduce_mean(trajector_error * trajector_error))
 
-    def compute_mode_(self,energy_samples):
+    def compute_mode_(self, energy_samples):
 
         maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=2), 2)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
@@ -209,15 +221,15 @@ class S1ToyContext(base.BaseContext):
         dim = energy_samples.shape[1]
         tensor_start = tf.constant(0, dtype=tf.float64)
         tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
-        poses = tf.linspace(tensor_start,tensor_stop, self.batch_size*dim*self.grid_size + 1)[:-1]
-        poses_ = tf.reshape(poses,[self.batch_size,dim,self.grid_size])
+        poses = tf.broadcast_to(tf.linspace(tensor_start, tensor_stop, self.grid_size + 1)[:-1], [1, 1, self.grid_size])
+        poses_ = tf.tile(poses, [self.batch_size, dim, 1])
         prob = tf.math.exp(energy_samples - ln_z_)
-        mode_idx = tf.expand_dims(tf.argmax(prob, axis=2),2)
-        poses_mode = tf.expand_dims(tf.gather_nd(poses_, mode_idx, batch_dims=2),2)
-        mean = tf.expand_dims(tf.cast(tf.math.real(moments[:,:,1]/moments[:,:,0]),dtype=tf.float64),2)
-        return poses_mode,mean
+        mode_idx = tf.expand_dims(tf.argmax(prob, axis=2), 2)
+        poses_mode = tf.expand_dims(tf.gather_nd(poses_, mode_idx, batch_dims=2), 2)
+        mean = tf.expand_dims(tf.cast(tf.math.real(moments[:, :, 1] / moments[:, :, 0]), dtype=tf.float64), 2)
+        return poses_mode, mean
 
-    def eta_symmetric_non_symmetric(self,coefficients):
+    def eta_symmetric_non_symmetric(self, coefficients):
         coefficients_complete = []
         for i in range(self.grid_size):
             if i == self.zeroth_freq_index:
@@ -229,7 +241,7 @@ class S1ToyContext(base.BaseContext):
 
         return tf.stack(coefficients_complete)
 
-    def neg_log_likelihood(self,input_output_tuple):
+    def neg_log_likelihood(self, input_output_tuple):
         """
               Compute the negative log likelihood loss over Harmonic Exponential Distribution for trajectory. This function would need to be called over a batch.
 
@@ -243,19 +255,25 @@ class S1ToyContext(base.BaseContext):
         """
 
         energy_samples, true_value = input_output_tuple
-        eta = tf.signal.rfft(energy_samples)
-        maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=1), 1)
+        eta = tf.cast(tf.signal.rfft(energy_samples), dtype=tf.complex64)
+        maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=-1), 1)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / math.pi)), 1) + maximum
+        ln_z_ = tf.cast(tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / math.pi)), 1) + maximum,
+                        dtype=tf.float64)
         eta_format = tf.map_fn(self.eta_symmetric_non_symmetric, eta)
         c = []
         for k in range(self.grid_size):
-            c.append(tf.expand_dims(eta_format[:, k] * tf.math.exp(1j * (k - self.zeroth_freq_index) * true_value[:, 0]), 1))
-        unnorm_prob = tf.expand_dims(-tf.math.real(tf.math.reduce_sum(tf.concat(c, axis=1), axis=1) / self.grid_size), 1)
-        return tf.reduce_mean(unnorm_prob + ln_z_,axis=0)
+            c.append(
+                tf.expand_dims(eta_format[:, k] * tf.math.exp(1j * (k - self.zeroth_freq_index) * true_value[:, 0]), 1))
+        # pdb.set_trace()
+        unnorm_prob = tf.cast(
+            tf.expand_dims(-tf.math.real(tf.math.reduce_sum(tf.concat(c, axis=1), axis=1) / self.grid_size), 1),
+            dtype=tf.float64)
+        return tf.reduce_mean(unnorm_prob + ln_z_, axis=0)
+
 
 class ObservationModel(tf.keras.Model):
-    def __init__(self,batch_size,grid_size):
+    def __init__(self, batch_size, grid_size):
         super().__init__()
         self.batch_size = batch_size
         self.grid_size = grid_size
@@ -267,8 +285,9 @@ class ObservationModel(tf.keras.Model):
             ]
         )
 
-    def call(self,input,training):
-        return self.model(input,training=training)
+    def call(self, input, training):
+        return self.model(input, training=training)
+
 
 class ProcessModel:
     """
@@ -283,15 +302,17 @@ class ProcessModel:
 
         Currently this class is not learning the process model through data but assumes a wrapped normal gaussian distribution to represent p_u(x_t - x_t-1)
     """
-    def __init__(self,grid_size,step,motion_noise,batch_size):
+
+    def __init__(self, grid_size, step, motion_noise, batch_size):
         self.grid_size = grid_size
         self.step = step
         self.motion_noise = motion_noise
         self.batch_size = batch_size
 
-    def energy(self,samples):
+    def energy(self, samples):
         self.cov = self.motion_noise ** 2 if self.motion_noise != 0.0 else 0.1
-        self.mu =  self.theta_to_2D(np.array([(self. step + np.random.normal(0.0, self.motion_noise, 1).item())%(2*np.pi)])).flatten()
+        self.mu = self.theta_to_2D(
+            np.array([(self.step + np.random.normal(0.0, self.motion_noise, 1).item()) % (2 * np.pi)])).flatten()
         x = self.theta_to_2D(samples)
         angle = np.arccos(x.dot(self.mu))  # r = 1 for both so no denominator needed
         return -0.5 * np.power(angle, 2) / self.cov
@@ -305,7 +326,8 @@ class ProcessModel:
         out[..., 0] = r * ct
         out[..., 1] = r * st
         return out
-    def __call__(self):
-        samples = np.linspace(0, 2 * math.pi, self.grid_size*self.batch_size)
-        return tf.reshape(tf.convert_to_tensor(self.energy(samples)),[self.batch_size,self.grid_size])
 
+    def __call__(self):
+        samples = np.linspace(0, 2 * math.pi, self.grid_size + 1)[:-1][np.newaxis, :]
+        samples_ = np.tile(samples, [self.batch_size, 1])
+        return tf.reshape(tf.convert_to_tensor(self.energy(samples_)), [self.batch_size, self.grid_size])

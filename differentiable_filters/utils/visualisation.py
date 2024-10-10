@@ -22,8 +22,8 @@ def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
     bandwidth = f[0].shape[0]
 
     # First plot the support of the distributions S^1
-    tensor_start = tf.constant(0, dtype=tf.float32)
-    tensor_stop = tf.constant(2 * math.pi, dtype=tf.float32)
+    tensor_start = tf.constant(0, dtype=tf.float64)
+    tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
     theta = tf.linspace(tensor_start, tensor_stop, bandwidth)
     theta = tf.concat([theta, theta[0, None]], 0)
 
