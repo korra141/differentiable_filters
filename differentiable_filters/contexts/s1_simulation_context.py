@@ -9,7 +9,7 @@ from differentiable_filters.contexts import base_context as base
 
 
 class S1ToyContext(base.BaseContext):
-    def __init__(self, batch_size, filter_type, grid_size, motion_noise, loss,learned_process_model):
+    def __init__(self, batch_size, filter_type, grid_size, motion_noise,measurement_noise, loss,learned_process_model,learned_measurement_model):
         """
         Minimal example context for the simulated disc tracking task on S1. A context
         contains problem-specific information such as the state size or process
@@ -48,11 +48,14 @@ class S1ToyContext(base.BaseContext):
         # define the state size and name the components
         self.batch_size = batch_size
         self.learned_process_model = learned_process_model
+        self.learned_measurement_model = learned_measurement_model
 
         # # parameters of the process model
         self.grid_size = grid_size
         self.zeroth_freq_index = math.floor(self.grid_size / 2)
         self.motion_noise = motion_noise
+        self.measurement_noise = measurement_noise
+
         self.loss = loss
 
         self.observation_model = ObservationModel(self.batch_size, self.grid_size)
@@ -78,8 +81,13 @@ class S1ToyContext(base.BaseContext):
         tf.keras.layer
             A layer that computes the expected observations for the input
             state and the Jacobian  of the observation model
+
         """
-        return self.observation_model(state, training)
+        if self.learned_measurement_model:
+            out = self.observation_model(state, training)
+        else:
+            out = self.analytical_model(state,self.measurement_noise)
+        return out
 
     ###########################################################################
     # process model
@@ -93,9 +101,7 @@ class S1ToyContext(base.BaseContext):
             joint_input = tf.keras.layers.Concatenate(axis=1)([old_state, control])
             out = self.process_model(joint_input,training)
         else:
-            out = self.analytical_model(control)
-        if tf.math.reduce_any(tf.math.is_nan(out)):
-            pdb.set_trace()
+            out = self.analytical_model(control,self.motion_noise)
         return out
 
     ###########################################################################
@@ -276,9 +282,11 @@ class S1ToyContext(base.BaseContext):
 
 
 
-    def energy(self, step, samples):
-        cov = self.motion_noise ** 2 if self.motion_noise != 0.0 else 0.1
-        mu = step
+    def energy(self, value, noise):
+        samples = tf.linspace(0.0, 2 * math.pi, self.grid_size + 1)[:-1][tf.newaxis, :]
+        samples_ = tf.tile(samples, [self.batch_size, 1])
+        cov = noise ** 2 if noise != 0.0 else 0.1
+        mu = value
         energy = (tf.cos(samples - mu)) / cov
         return energy
 
@@ -289,10 +297,8 @@ class S1ToyContext(base.BaseContext):
     #     out = tf.stack([r * ct, r * st], axis=-1)
     #     return out
 
-    def analytical_model(self,step):
-        samples = tf.linspace(0.0, 2 * math.pi, self.grid_size + 1)[:-1][tf.newaxis, :]
-        samples_ = tf.tile(samples, [self.batch_size, 1])
-        return tf.reshape(self.energy(step,samples_), [self.batch_size, self.grid_size])
+    def analytical_model(self,value,noise):
+        return tf.reshape(self.energy(value,noise), [self.batch_size, self.grid_size])
 
 
 

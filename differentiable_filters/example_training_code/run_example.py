@@ -26,8 +26,9 @@ from differentiable_filters.hef_analytical.filter import BayesFilter
 from differentiable_filters.hef_analytical.s1_distributions import HarmonicExponentialDistribution,S1Gaussian,S1
 from differentiable_filters.hef_analytical.s1_simulator import S1Simulator
 from differentiable_filters.hef_analytical.s1_fft import S1FFT
+from differentiable_filters.filters import hef_cell as hef
 def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_length, motion_noise,
-                measurement_noise, train_size, initial_cov, epochs, n_traj,learning_rate,learned_process_model):
+                measurement_noise, train_size, initial_cov, epochs, n_traj,learning_rate,learned_process_model,learned_measurement_model):
     """
     Exemplary code to set up and train a differentiable filter for the
     simulated disc tracking task described in the paper "How to train your
@@ -79,7 +80,9 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
 
     debug = False
 
-    model = FilterApplication(filter_type, loss, batch_size, grid_size, initial_cov, motion_noise,debug,learned_process_model)
+    context = S1ToyContext(batch_size, filter_type, grid_size, motion_noise,measurement_noise, loss, learned_process_model,learned_measurement_model)
+
+    model = FilterApplication(context, filter_type, initial_cov,debug)
     val_size = 72
     test_size = 30
     control_step = 0.3
@@ -173,13 +176,14 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
     print("\n Testing")
-    out_analytical_hef = lambda x : run_hef_analytical(x, control_step , grid_size, motion_noise,
-                                            measurement_noise, initial_cov)
-    test_dict = evaluate(model, test_set, "test", batch_size, trajectory_length, n_traj, control_step,fig_dir,out_analytical_hef)
+    out_analytical_hef = lambda x,y : run_hef_analytical(x, y, control_step , initial_cov, motion_noise,
+                                            measurement_noise, grid_size)
+    out_analytical_hef_temp = lambda x,y: run_hef_analytical_temp(x,y,control_step, context,model,trajectory_length)
+    test_dict = evaluate(model, test_set, "test", batch_size, trajectory_length, n_traj, control_step,fig_dir,out_analytical_hef,out_analytical_hef_temp)
     wandb.log(test_dict)
     wandb.finish()
 
-def run_hef_analytical(test_set, step, grid_size, motion_noise, measurement_noise, initial_cov):
+def run_hef_analytical_temp(measurements, poses, step,context,filter,trajectory_length):
     """
     Run the Analytical Harmonic Exponential Filter on the test set
 
@@ -193,25 +197,85 @@ def run_hef_analytical(test_set, step, grid_size, motion_noise, measurement_nois
     posteriori_distribution, measurement_distribution, belief_prediction : np.ndarray
         The posteriori distribution, measurement distribution, and belief prediction
     """
-    np_test_set = np.stack(test_set)
-    batch_size = np_test_set.shape[0]
-    trajectory_length = np_test_set.shape[1]
+    grid_size = context.grid_size
+    batch_size = context.batch_size
+    # np_test_set = np.stack(test_set)
+    # batch_size = np_test_set.shape[0]
+    # trajectory_length = np_test_set.shape[1]
+    grid = tf.linspace(0, 2 * math.pi, grid_size + 1)[:,-1][tf.newaxis, ...]
+    grid_= tf.tile(grid,[batch_size,1])
+    control = tf.ones([batch_size,1]) * step
+    # grid_batched_reshape = tf.reshape(grid_batched, (batch_size, 1, grid_size))
+    # fft = S1FFT(bandwidth=grid_size, oversampling_factor=2)
+
+    # simulator = S1Simulator(step=np.ones((batch_size, 1, 1)) * step, theta_initial=np_test_set[:, 0][..., np.newaxis], samples=grid_batched_reshape, fft=fft,
+    #                         motion_noise=motion_noise, measurement_noise=measurement_noise)
+
+    # prior = S1Gaussian(mu_theta=np_test_set[:, 0][..., np.newaxis], cov=initial_cov, samples=grid_batched_reshape, fft=fft)
+    # filter = BayesFilter(distribution=S1, prior=prior)
+    # posteriori_distribution_list = []
+    # belief_prediction_list = []
+    # measurement_distribution_list = []
+    # for x,y in test_set: # x is the measurement and y is the pose
+    posterior_list = []
+    pred_list = []
+    prior = filter.energy(samples=grid_, mu_theta=poses[:,0])
+    measurement_list = []
+    for iter in range(trajectory_length):
+        if iter == 0 :
+            belief_old = prior
+        else :
+            belief_old = posterior_list[iter-1]
+        pred_list.append(hef._prediction_step(belief_old, context.run_process_model(None,control,training=False)))
+        measurement_likelihood = context.run_observation_model(measurements,training=False)
+        posteriori_hat_ = hef._update(pred_list[iter],measurement_likelihood )
+        posterior_list.append(posteriori_hat_)
+        measurement_list.append(measurement_likelihood)
+
+        posteriori_distribution = tf.stack(posterior_list, axes=1).squeeze(2).astype(tf.float64)
+        measurement_distribution = tf.stack(measurement_list, axes=1).squeeze(2).astype(tf.float64)
+        belief_prediction = tf.stack(pred_list, axes=1).squeeze(2).astype(tf.float64)
+
+
+    return posteriori_distribution, measurement_distribution, belief_prediction
+
+
+
+def run_hef_analytical(measurements, poses, step, initial_cov,motion_noise,measurement_noise,grid_size):
+    """
+    Run the Analytical Harmonic Exponential Filter on the test set
+
+    Parameters
+    ----------
+    test_set : tf.data.Dataset
+        The test set to run the filter on
+
+    Returns
+    -------
+    posteriori_distribution, measurement_distribution, belief_prediction : np.ndarray
+        The posteriori distribution, measurement distribution, and belief prediction
+    """
+
+    measurements = measurements.numpy()
+    poses = poses.numpy()
+    batch_size = measurements.shape[0]
+    trajectory_length = measurements.shape[1]
     grid = np.linspace(0, 2 * np.pi, grid_size, dtype=np.float64, endpoint=False)[np.newaxis, ...]
     grid_batched = np.tile(grid,[batch_size,1])
     grid_batched_reshape = np.reshape(grid_batched, (batch_size, 1, grid_size))
     fft = S1FFT(bandwidth=grid_size, oversampling_factor=2)
 
-    simulator = S1Simulator(step=np.ones((batch_size, 1, 1)) * step, theta_initial=np_test_set[:, 0][..., np.newaxis], samples=grid_batched_reshape, fft=fft,
+    simulator = S1Simulator(step=np.ones((batch_size, 1, 1)) * step, theta_initial=poses[:, 0][..., np.newaxis], samples=grid_batched_reshape, fft=fft,
                             motion_noise=motion_noise, measurement_noise=measurement_noise)
 
-    prior = S1Gaussian(mu_theta=np_test_set[:, 0][..., np.newaxis], cov=initial_cov, samples=grid_batched_reshape, fft=fft)
+    prior = S1Gaussian(mu_theta=poses[:, 0][..., np.newaxis], cov=initial_cov, samples=grid_batched_reshape, fft=fft)
     filter = BayesFilter(distribution=S1, prior=prior)
     posterior_list = []
     pred_list = []
     measurement_list = []
     for iter in range(trajectory_length):
         pred_list.append(filter.prediction(motion_model=simulator.motion()).energy)
-        posteriori_hat_, measurement = filter.update(measurement_model=simulator.measurement())
+        posteriori_hat_, measurement = filter.update(measurement_model=simulator.measurement(measurement[:,iter]))
         posterior_list.append(posteriori_hat_.energy)
         measurement_list.append(measurement.energy)
 
@@ -245,7 +309,7 @@ def reset_weights(model):
                 var = getattr(init_container, key.replace("_initializer", ""))
 
             var.assign(initializer(var.shape, var.dtype))
-def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,out_analytical_hef=None):
+def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,out_analytical_hef=None,out_analytical_hef_temp=None):
     """
     Evaluates the model on the given dataset (without training)
 
@@ -265,6 +329,7 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
     """
     outputs = {}
     outputs_analytical = {}
+    outputs_analytical_temp = {}
     metric_names = []
     plotting_dict = {}
     for step, (x_batch, y_batch) in enumerate(dataset):
@@ -276,16 +341,22 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
         loss_value, metrics, metric_names = \
             model.context.get_loss(x_batch, y_batch, out)
         if type == "test":
-            out_analytical_hef_ = out_analytical_hef(x_batch)
+            out_analytical_hef_ = out_analytical_hef(x_batch,y_batch)
+            out_analytical_hef_temp_ = out_analytical_hef_temp(x_batch,y_batch)
             plotting_dict["hef_analytical"] = out_analytical_hef_
+            plotting_dict["hef_analytical_temp"] = out_analytical_hef_temp
             loss_value_analytical, metrics_analytical, metric_names_analytical = \
                 model.context.get_loss(x_batch, y_batch, out_analytical_hef_)
+            loss_value_analytical_temp, metrics_analytical_temp, metric_names_analytical_temp = \
+                model.context.get_loss(x_batch, y_batch, out_analytical_hef_temp)
             if step == 0:
                 for ind, k in enumerate(metric_names_analytical):
                     outputs_analytical[k] = [metrics_analytical[ind]]
+                    outputs_analytical_temp[k] = [metrics_analytical_temp[ind]]
             else:
                 for ind, k in enumerate(metric_names_analytical):
                     outputs_analytical[k].append(metrics_analytical[ind])
+                    outputs_analytical_temp[k].append(metrics_analytical_temp[ind])
         plotting_figure(plotting_dict, y_batch, x_batch, n_traj, batch_size, folder_name, step, trajectory_length,
                         frequency_iter=3)
 
@@ -307,7 +378,9 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
     if type == "test":
         for ind, k in enumerate(metric_names_analytical):
             tf.print("hef analytical ", k, ": ", tf.reduce_mean(outputs_analytical[k]))
+            tf.print("hef analytical temp ", k, ": ", tf.reduce_mean(outputs_analytical_temp[k]))
             dict["hef analytical" + type + "/" + k] = tf.reduce_mean(outputs_analytical[k])
+            dict["hef analytical temp" + type + "/" + k] = tf.reduce_mean(outputs_analytical_temp[k])
 
     return dict
 
@@ -338,8 +411,7 @@ def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_n
 
 
 class FilterApplication(tf.keras.Model):
-    def __init__(self, filter_type='ekf', loss='nll', batch_size=32,
-                 grid_size=20, initial_cov=0.1, motion_noise=0.5, debug=False,learned_process_model = True,**kwargs):
+    def __init__(self, context, filter_type='ekf', initial_cov=0.1, debug=False,**kwargs):
         """
         Tf.keras.Model that combines a differentiable filter and a problem
         context to run filtering on this problem.
@@ -380,9 +452,8 @@ class FilterApplication(tf.keras.Model):
         # Construct the context class that describes the problem on which
         # we want to run a differentiable filter
         # ----------------------------------------------------------------------
-        self.grid_size = grid_size
-        self.context = S1ToyContext(batch_size, filter_type, self.grid_size, motion_noise,loss,learned_process_model)
-
+        self.context = context
+        self.grid_size = self.context.grid_size
         # -------------------------- (2) --------------------------------------
         # Instantiate the desired filter cell
         # ----------------------------------------------------------------------
@@ -423,8 +494,9 @@ class FilterApplication(tf.keras.Model):
 
         self.cov = initial_cov
 
-    def compute_energy(self, theta, mu):
+    def compute_energy(self, theta, pose):
         x = self.theta_to_2D(theta)
+        mu = self.theta_to_2D(pose)
         angle = tf.math.acos(tf.einsum('pmn,pkn->pm', x, mu))
         return -0.5 * tf.math.pow(angle, 2) / self.cov
 
@@ -454,13 +526,13 @@ class FilterApplication(tf.keras.Model):
 
         """
         raw_observations,control,init_pose = inputs
-        mu = self.theta_to_2D(init_pose)
+
         tensor_start = tf.constant(0, dtype=tf.float64)
         tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
         samples_ = tf.expand_dims(tf.linspace(tensor_start, tensor_stop, self.grid_size),0)
         samples_batched = tf.tile(samples_, [self.batch_size, 1])
 
-        init_state = (tf.reshape(tf.convert_to_tensor(self.compute_energy(samples_batched, mu)),
+        init_state = (tf.reshape(tf.convert_to_tensor(self.compute_energy(samples_batched, init_pose)),
                                  [self.batch_size, -1]), tf.zeros([self.batch_size, 1]))
 
         inputs = (raw_observations, control)
@@ -514,6 +586,9 @@ def main():
     parser.add_argument('--learned_process_model', dest='learned_process_model',
                         type=bool, default=True,
                         help='flag set to true will learn the process model')
+    parser.add_argument('--learned_measurement_model', dest='learned_measurement_model',
+                        type=bool, default=True,
+                        help='flag set to true will learn the measurement model')
 
 
     args = parser.parse_args()
@@ -540,7 +615,7 @@ def main():
         config = args
     )
 
-    run_example(args.filter, args.loss, args.out_dir, args.batch_size, args.grid_size,args.trajectory_length, args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,args.learning_rate,args.learned_process_model)
+    run_example(args.filter, args.loss, args.out_dir, args.batch_size, args.grid_size,args.trajectory_length, args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,args.learning_rate,args.learned_process_model,args.learned_measurement_model)
 
 
 if __name__ == "__main__":

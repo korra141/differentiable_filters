@@ -3,7 +3,7 @@ from typing import Optional
 
 import numpy as np
 
-from differentiable_filters.hef_analytical.s1_distributions import S1, S1Gaussian, S1MultimodalGaussian
+from differentiable_filters.hef_analytical.s1_distributions import S1, S1Gaussian, S1MultimodalGaussian,VonMises
 from differentiable_filters.hef_analytical.base_fft import FFTBase
 from differentiable_filters.hef_analytical.simulator_base import Simulator
 
@@ -30,19 +30,19 @@ class S1Simulator(Simulator):
         self.theta = (self.theta + self.step)
         # Jitter step with noise and wrap theta between 0 and 2pi
         noisy_prediction = (self.step + np.random.normal(0.0, self.motion_noise, self.theta.shape)) % (2 * np.pi)
-        return S1Gaussian(mu_theta=noisy_prediction,
+        return VonMises(mu_theta=noisy_prediction,
                           cov=self.motion_cov,
                           samples=self.samples,
                           fft=self.fft)
 
-    def measurement(self) -> S1:
+    def measurement(self,measurement) -> S1:
         """
         Simulate measurement
         :return: S1 Distribution of measurement model.
         """
         # Jitter measurement with noise and make sure theta is between 0 and 2pi
-        noisy_measurement = (self.theta + np.random.normal(0.0, self.measurement_noise, self.theta.shape)) % (2 * np.pi)
-        return S1Gaussian(mu_theta=noisy_measurement,
+        noisy_measurement = (measurement + np.random.normal(0.0, self.measurement_noise, self.theta.shape)) % (2 * np.pi)
+        return VonMises(mu_theta=noisy_measurement,
                           cov=self.measurement_cov,
                           samples=self.samples,
                           fft=self.fft)
