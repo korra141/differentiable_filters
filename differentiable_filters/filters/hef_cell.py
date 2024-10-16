@@ -69,25 +69,27 @@ class HEFCell(base.FilterCellBase):
             the new predicted state as defined in state_size
         """
         # turn off the '/rnn' name scope to improve summary logging
-        with tf.name_scope(""):
+        with (tf.name_scope("")):
             # get the inputs
+            observations, control = inputs
             # import pdb;pdb.set_trace()
             energy_samples_old, step = states
 
             energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
             # predict the next state
-            process_energy_samples = self.context.process_model()
+            process_energy_samples = self.context.run_process_model(energy_samples_old,control,training)
             pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
 
 
-            z_pred = self.context.run_observation_model(inputs,
+            z_pred_energy = self.context.run_observation_model(observations,
                                                            training=training)
+
 
             ###################################################################
             # update the predictions with the observations
-            state_up = self._update(pred_state_eta, z_pred)
+            state_up = self._update(pred_state_eta, z_pred_energy)
             state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
-            z_pred = tf.cast(tf.reshape(z_pred, [self.batch_size, -1]),dtype=tf.float64)
+            z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
             pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
 
 
@@ -95,7 +97,10 @@ class HEFCell(base.FilterCellBase):
             new_state = (state, step + 1)
 
 
-            output = (state, z_pred, pred_state_energy)
+            output = (state, z_pred_energy, pred_state_energy)
+
+
+
 
             return output, new_state
     def _prediction_step(self,energy_samples_old,process_energy_samples):

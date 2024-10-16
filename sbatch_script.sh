@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=diff_hef     # Job name
 #SBATCH --nodes=5             # Number of nodes
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=2
 #SBATCH --ntasks-per-node=2
 #SBATCH --mem=32G
@@ -30,5 +30,5 @@ wandb login 8ffe865c4b82a4e1f84ebcf8cc9681892e828854
 unset CUDA_VISIBLE_DEVICES
 
 # Execute Python script
-wandb agent korra141/differential-hef/5f04l9ae
+wandb agent korra141/differential-hef/pjzuykdw
 python differentiable_filters/example_training_code/run_example.py

@@ -9,7 +9,7 @@ from differentiable_filters.contexts import base_context as base
 
 
 class S1ToyContext(base.BaseContext):
-    def __init__(self, batch_size, filter_type, grid_size, motion_noise, loss):
+    def __init__(self, batch_size, filter_type, grid_size, motion_noise, loss,learned_process_model):
         """
         Minimal example context for the simulated disc tracking task on S1. A context
         contains problem-specific information such as the state size or process
@@ -47,16 +47,17 @@ class S1ToyContext(base.BaseContext):
 
         # define the state size and name the components
         self.batch_size = batch_size
+        self.learned_process_model = learned_process_model
 
         # # parameters of the process model
         self.grid_size = grid_size
         self.zeroth_freq_index = math.floor(self.grid_size / 2)
-        self.step = 0.1
         self.motion_noise = motion_noise
         self.loss = loss
 
         self.observation_model = ObservationModel(self.batch_size, self.grid_size)
-        self.process_model = ProcessModel(self.grid_size, self.step, self.motion_noise, self.batch_size)
+        if learned_process_model:
+            self.process_model = ProcessModel(self.grid_size,self.batch_size)
         self.dim_x = None
         self.dim_z = None
         self.dim_u = None
@@ -83,12 +84,19 @@ class S1ToyContext(base.BaseContext):
     ###########################################################################
     # process model
     ###########################################################################
-    def run_process_model(self, old_state, training):
+    def run_process_model(self, old_state,control, training):
         """
         Predicts the next state given the old state and actions performed
 
         """
-        return self.process_model()
+        if self.learned_process_model:
+            joint_input = tf.keras.layers.Concatenate(axis=1)([old_state, control])
+            out = self.process_model(joint_input,training)
+        else:
+            out = self.analytical_model(control)
+        if tf.math.reduce_any(tf.math.is_nan(out)):
+            pdb.set_trace()
+        return out
 
     ###########################################################################
     # loss functions
@@ -108,24 +116,17 @@ class S1ToyContext(base.BaseContext):
             metric-names: the names for those metrics
         """
 
+
         posterior_state, z_pred, pred_state = prediction
-        pose = data
+        pose = label
 
-        observation = label
+        observation = data
 
-        # make sure the pose and observations inputed are complex64
-        pose_cast = tf.cast(pose, dtype=tf.complex64)
-        observation_cast = tf.cast(observation, dtype=tf.complex64)
-        nll_posterior = []
-        nll_likelihood = []
+        nll_posterior = self.neg_log_likelihood((posterior_state, pose),self.grid_size)
+        nll_likelihood = self.neg_log_likelihood((z_pred, pose),self.grid_size)
 
-        # TODO: make this such that it can be multiprocess since one thread would take a long time to compute this loss.
-        for x in range(self.batch_size):
-            nll_posterior.append(self.neg_log_likelihood((posterior_state[x], pose_cast[x])))
-            nll_likelihood.append(self.neg_log_likelihood((z_pred[x], observation_cast[x])))
-
-        nl_loss_posterior = tf.reduce_mean(tf.stack(nll_posterior, axis=0), axis=0)
-        nl_loss_measurement = tf.reduce_mean(tf.stack(nll_likelihood, axis=0), axis=0)
+        nl_loss_posterior = tf.reduce_mean(nll_posterior)
+        nl_loss_measurement = tf.reduce_mean(nll_likelihood)
 
         # compute the mode of the distribution
         mode_pose_posterior, mean_pose_posterior = self.compute_mode_(posterior_state)
@@ -183,7 +184,8 @@ class S1ToyContext(base.BaseContext):
         else:
             total = nl_loss_posterior
         # total = tf.reduce_mean(mse_obs) + wd
-
+        if tf.math.reduce_any(tf.math.is_nan(total)):
+            pdb.set_trace()
         metrics = [total, nl_loss_posterior, nl_loss_measurement, ate_mode_post, ate_mode_pred, ate_mode_meas,
                    ate_mean1_post, ate_mean2_post, ate_mean1_pred, ate_mean2_pred,
                    ate_mean1_meas, ate_mean2_meas,
@@ -229,19 +231,19 @@ class S1ToyContext(base.BaseContext):
         mean = tf.expand_dims(tf.cast(tf.math.real(moments[:, :, 1] / moments[:, :, 0]), dtype=tf.float64), 2)
         return poses_mode, mean
 
-    def eta_symmetric_non_symmetric(self, coefficients):
-        coefficients_complete = []
-        for i in range(self.grid_size):
-            if i == self.zeroth_freq_index:
-                coefficients_complete.append(coefficients[0])
-            elif i < self.zeroth_freq_index:
-                coefficients_complete.append(tf.math.conj(coefficients[self.zeroth_freq_index - i]))
-            elif i > self.zeroth_freq_index:
-                coefficients_complete.append(coefficients[i - self.zeroth_freq_index])
+    # def eta_symmetric_non_symmetric(self, coefficients):
+    #     coefficients_complete = []
+    #     for i in range(self.grid_size):
+    #         if i == self.zeroth_freq_index:
+    #             coefficients_complete.append(coefficients[0])
+    #         elif i < self.zeroth_freq_index:
+    #             coefficients_complete.append(tf.math.conj(coefficients[self.zeroth_freq_index - i]))
+    #         elif i > self.zeroth_freq_index:
+    #             coefficients_complete.append(coefficients[i - self.zeroth_freq_index])
+    #
+    #     return tf.stack(coefficients_complete)
 
-        return tf.stack(coefficients_complete)
-
-    def neg_log_likelihood(self, input_output_tuple):
+    def neg_log_likelihood(self, input_output_tuple,grid_size):
         """
               Compute the negative log likelihood loss over Harmonic Exponential Distribution for trajectory. This function would need to be called over a batch.
 
@@ -255,21 +257,43 @@ class S1ToyContext(base.BaseContext):
         """
 
         energy_samples, true_value = input_output_tuple
-        eta = tf.cast(tf.signal.rfft(energy_samples), dtype=tf.complex64)
-        maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=-1), 1)
-        moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
-        ln_z_ = tf.cast(tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / math.pi)), 1) + maximum,
-                        dtype=tf.float64)
-        eta_format = tf.map_fn(self.eta_symmetric_non_symmetric, eta)
-        c = []
-        for k in range(self.grid_size):
-            c.append(
-                tf.expand_dims(eta_format[:, k] * tf.math.exp(1j * (k - self.zeroth_freq_index) * true_value[:, 0]), 1))
+        energy_samples = tf.cast(energy_samples, tf.complex64)
+        eta = tf.cast(tf.signal.fftshift(tf.signal.fft(energy_samples),axes = -1), dtype=tf.complex64)
+        maximum = tf.expand_dims(tf.math.reduce_max(tf.math.real(energy_samples), axis=-1), -1)
+        maximum = tf.cast(maximum, dtype=tf.complex64)
+        moments = tf.signal.fft(tf.exp(energy_samples - maximum))
+        ln_z_ = tf.cast(tf.math.real(tf.expand_dims(tf.math.log(moments[..., 0] / (math.pi*grid_size*math.pi/62)), -1) + maximum),
+                        dtype=tf.float64) # [batch_size, trajectory_length, 1]
+        k_values = tf.range(0, self.grid_size, 1,dtype=tf.dtypes.float64)  - self.zeroth_freq_index
+        k_values = tf.expand_dims(tf.expand_dims(tf.expand_dims(k_values, 0), 0),-1)# [1, 1, grid_size,1]
+        value = tf.expand_dims(true_value,-1) # [batch_size, trajectory_length, 1,1]
         # pdb.set_trace()
-        unnorm_prob = tf.cast(
-            tf.expand_dims(-tf.math.real(tf.math.reduce_sum(tf.concat(c, axis=1), axis=1) / self.grid_size), 1),
-            dtype=tf.float64)
-        return tf.reduce_mean(unnorm_prob + ln_z_, axis=0)
+        exponential_term = tf.math.exp(tf.constant(1j,dtype=tf.complex64) * tf.cast(k_values * value,dtype=tf.complex64)) #[batch_size, trajectory_length, grid_size,1]
+        inverse_transform = tf.math.real(tf.math.reduce_sum(tf.expand_dims(eta, -1) * exponential_term,axis=2)) # [batch_size, trajectory_length,  1]
+        nll = tf.reduce_mean(tf.cast(-inverse_transform / grid_size,dtype=tf.float64) + ln_z_)
+        return nll
+
+
+
+
+    def energy(self, step, samples):
+        cov = self.motion_noise ** 2 if self.motion_noise != 0.0 else 0.1
+        mu = step
+        energy = (tf.cos(samples - mu)) / cov
+        return energy
+
+    # def theta_to_2D(self, theta):
+    #     r = 1.0
+    #     ct = tf.cos(theta)
+    #     st = tf.sin(theta)
+    #     out = tf.stack([r * ct, r * st], axis=-1)
+    #     return out
+
+    def analytical_model(self,step):
+        samples = tf.linspace(0.0, 2 * math.pi, self.grid_size + 1)[:-1][tf.newaxis, :]
+        samples_ = tf.tile(samples, [self.batch_size, 1])
+        return tf.reshape(self.energy(step,samples_), [self.batch_size, self.grid_size])
+
 
 
 class ObservationModel(tf.keras.Model):
@@ -277,6 +301,8 @@ class ObservationModel(tf.keras.Model):
         super().__init__()
         self.batch_size = batch_size
         self.grid_size = grid_size
+
+    def build(self, input_shape=None):
         self.model = tf.keras.Sequential(
             [
                 tf.keras.layers.Dense(16, activation="relu", name="layer1"),
@@ -289,7 +315,29 @@ class ObservationModel(tf.keras.Model):
         return self.model(input, training=training)
 
 
-class ProcessModel:
+# def add_noise_model(self, input_shape):
+#     """
+#     Creates a neural network-based noise model.
+#
+#     Parameters
+#     ----------
+#     input_shape : tuple
+#         The shape of the input to the noise model.
+#
+#     Returns
+#     -------
+#     tf.keras.Model
+#         A Keras model representing the noise model.
+#     """
+#     inputs = tf.keras.Input(shape=input_shape)
+#     x = tf.keras.layers.Dense(32, activation="relu")(inputs)
+#     x = tf.keras.layers.Dense(64, activation="relu")(x)
+#     x = tf.keras.layers.Dense(32, activation="relu")(x)
+#     outputs = tf.keras.layers.Dense(self.grid_size)(x)
+#     noise_model = tf.keras.Model(inputs, outputs, name="noise_model")
+#     return noise_model
+
+class ProcessModel(tf.keras.Model):
     """
         Arguments:
             grid_size: bandwidth of the filter
@@ -303,31 +351,36 @@ class ProcessModel:
         Currently this class is not learning the process model through data but assumes a wrapped normal gaussian distribution to represent p_u(x_t - x_t-1)
     """
 
-    def __init__(self, grid_size, step, motion_noise, batch_size):
+    def __init__(self, grid_size, batch_size):
+        super().__init__()
         self.grid_size = grid_size
-        self.step = step
-        self.motion_noise = motion_noise
         self.batch_size = batch_size
+    def build(self, input_shape=None):
+        self.model = tf.keras.Sequential([
+                tf.keras.layers.Dense(
+                    units=32,
+                    activation=tf.nn.relu,
+                    kernel_initializer=tf.initializers.glorot_normal(),
+                    kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    name='process_fc1'),
+                tf.keras.layers.Dense(
+                    units=64,
+                    activation=tf.nn.relu,
+                    kernel_initializer=tf.initializers.glorot_normal(),
+                    kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    name='process_fc2'),
+                tf.keras.layers.Dense(
+                    units=self.grid_size,
+                    activation=None,
+                    kernel_initializer=tf.initializers.glorot_normal(),
+                    kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                    name='process_fc3'),
+            ])
 
-    def energy(self, samples):
-        self.cov = self.motion_noise ** 2 if self.motion_noise != 0.0 else 0.1
-        self.mu = self.theta_to_2D(
-            np.array([(self.step + np.random.normal(0.0, self.motion_noise, 1).item()) % (2 * np.pi)])).flatten()
-        x = self.theta_to_2D(samples)
-        angle = np.arccos(x.dot(self.mu))  # r = 1 for both so no denominator needed
-        return -0.5 * np.power(angle, 2) / self.cov
 
-    def theta_to_2D(self, theta):
-        r = 1.0
-        out = np.empty(theta.shape + (2,))
+    def call(self,input=None,training=None):
+        return self.model(input,training=training)
 
-        ct = np.cos(theta)
-        st = np.sin(theta)
-        out[..., 0] = r * ct
-        out[..., 1] = r * st
-        return out
-
-    def __call__(self):
-        samples = np.linspace(0, 2 * math.pi, self.grid_size + 1)[:-1][np.newaxis, :]
-        samples_ = np.tile(samples, [self.batch_size, 1])
-        return tf.reshape(tf.convert_to_tensor(self.energy(samples_)), [self.batch_size, self.grid_size])

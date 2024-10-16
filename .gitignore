@@ -8,6 +8,10 @@ outputs/
 train/
 wandb/
 differentiable_filters/utils/function_learning/
+*.err
+*.out
+*.swp
+.idea/
 # C extensions
 *.so
 

@@ -27,7 +27,7 @@ from differentiable_filters.hef_analytical.s1_distributions import HarmonicExpon
 from differentiable_filters.hef_analytical.s1_simulator import S1Simulator
 from differentiable_filters.hef_analytical.s1_fft import S1FFT
 def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_length, motion_noise,
-                measurement_noise, train_size, initial_cov, epochs, n_traj,learning_rate):
+                measurement_noise, train_size, initial_cov, epochs, n_traj,learning_rate,learned_process_model):
     """
     Exemplary code to set up and train a differentiable filter for the
     simulated disc tracking task described in the paper "How to train your
@@ -79,10 +79,10 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
 
     debug = False
 
-    model = FilterApplication(filter_type, loss, batch_size, grid_size, initial_cov, motion_noise,debug=debug)
+    model = FilterApplication(filter_type, loss, batch_size, grid_size, initial_cov, motion_noise,debug,learned_process_model)
     val_size = 72
     test_size = 30
-    step = 0.3
+    control_step = 0.3
 
     n_samples = train_size + val_size + test_size
     starting_positions = np.linspace(0, 2 * np.pi, n_samples, endpoint=False)
@@ -95,51 +95,49 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
         for j in range(trajectory_length):
             true_trajectories[i][j] = theta % (2 * np.pi)
             measurements[i][j] = (theta + np.random.normal(0.0, measurement_noise, 1).item()) % (2 * np.pi)
-            theta = theta + step
+            theta = theta + control_step
     measurements_ = tf.expand_dims(tf.convert_to_tensor(measurements),2)
     ground_truth_ = tf.expand_dims(tf.convert_to_tensor(true_trajectories),2)
-    train_dataset = tf.data.Dataset.from_tensor_slices((ground_truth_[:train_size], measurements_[:train_size]))
+
+    train_dataset = tf.data.Dataset.from_tensor_slices((measurements_[:train_size],ground_truth_[:train_size]))
     train_set = train_dataset.shuffle(train_size).batch(batch_size, drop_remainder=True)
 
     val_dataset = tf.data.Dataset.from_tensor_slices(
-        (ground_truth_[train_size:train_size + val_size], measurements_[train_size:train_size + val_size]))
+        ( measurements_[train_size:train_size + val_size],ground_truth_[train_size:train_size + val_size]))
     val_set = val_dataset.batch(batch_size, drop_remainder=True)
 
 
     test_dataset = tf.data.Dataset.from_tensor_slices(
-        (ground_truth_[train_size + val_size:], measurements_[train_size + val_size:]))
+        (measurements_[train_size + val_size:],ground_truth_[train_size + val_size:]))
     test_set = test_dataset.batch(batch_size, drop_remainder=True)
 
     # prepare the training
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     custom_step = 0
 
-    run_name = "s1_diff_hef_filter_" + uuid
+    # run_name = "s1_diff_hef_filter_" + uuid
 
-    wandb.init(
-        project = "differential-hef",
-        entity ="korra141",
-        name = run_name,
-        tags = ["version_2"]
-    )
+
 
     for epoch in range(epochs):
         print("\nStart of epoch %d \n" % (epoch))
         print("Validating ...")
-        dict_val = evaluate(model, val_set, "validate", batch_size, trajectory_length, n_traj, fig_dir)
+        dict_val = evaluate(model, val_set, "validate", batch_size, trajectory_length, n_traj,control_step , fig_dir)
         running_loss = 0
         for (x_batch_train, y_batch_train) in train_set:
 
             start = time.time()
+            control = tf.ones_like(x_batch_train) * control_step
+            input = (x_batch_train, control, y_batch_train[:,0])
 
             with tf.GradientTape() as tape:
-                out = model(x_batch_train)
+                out = model(input)
 
                 loss_value, metrics, metric_names = \
                     model.context.get_loss(x_batch_train, y_batch_train, out)
 
                 running_loss += loss_value.numpy().item()
-
+                #pdb.set_trace()
                 grads = tape.gradient(loss_value, model.trainable_weights)
 
                 if (custom_step % 50 == 0):
@@ -169,14 +167,15 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
         dict_epoch.update(dict_val)
         wandb.log(dict_epoch)
 
+    # print(model.summary())
 
     # test the trained model on the held out data
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
     print("\n Testing")
-    out_analytical_hef = lambda x : run_hef_analytical(x, step, grid_size, motion_noise,
+    out_analytical_hef = lambda x : run_hef_analytical(x, control_step , grid_size, motion_noise,
                                             measurement_noise, initial_cov)
-    test_dict = evaluate(model, test_set, "test", batch_size, trajectory_length, n_traj, fig_dir,out_analytical_hef)
+    test_dict = evaluate(model, test_set, "test", batch_size, trajectory_length, n_traj, control_step,fig_dir,out_analytical_hef)
     wandb.log(test_dict)
     wandb.finish()
 
@@ -246,7 +245,7 @@ def reset_weights(model):
                 var = getattr(init_container, key.replace("_initializer", ""))
 
             var.assign(initializer(var.shape, var.dtype))
-def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, folder_name=None,out_analytical_hef=None):
+def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,out_analytical_hef=None):
     """
     Evaluates the model on the given dataset (without training)
 
@@ -269,8 +268,9 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, folder
     metric_names = []
     plotting_dict = {}
     for step, (x_batch, y_batch) in enumerate(dataset):
-
-        out = model(x_batch, training=False)
+        control = tf.ones_like(x_batch) * control_step
+        input = (x_batch, control, y_batch[:,0])
+        out = model(input, training=False)
         plotting_dict['hef_diff'] = out
 
         loss_value, metrics, metric_names = \
@@ -314,7 +314,7 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, folder
 
 def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_name, batch_no, trajectory_length,
                     frequency_iter=3):
-    # pdb.set_trace()
+    # p db.set_trace()
     list_idx = random.sample(range(0, batch_size), n_traj)
     measurement = label
     trajectory = input
@@ -339,7 +339,7 @@ def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_n
 
 class FilterApplication(tf.keras.Model):
     def __init__(self, filter_type='ekf', loss='nll', batch_size=32,
-                 grid_size=20, initial_cov=0.1, motion_noise=0.5, debug=False,**kwargs):
+                 grid_size=20, initial_cov=0.1, motion_noise=0.5, debug=False,learned_process_model = True,**kwargs):
         """
         Tf.keras.Model that combines a differentiable filter and a problem
         context to run filtering on this problem.
@@ -381,7 +381,7 @@ class FilterApplication(tf.keras.Model):
         # we want to run a differentiable filter
         # ----------------------------------------------------------------------
         self.grid_size = grid_size
-        self.context = S1ToyContext(batch_size, filter_type, self.grid_size, motion_noise,loss)
+        self.context = S1ToyContext(batch_size, filter_type, self.grid_size, motion_noise,loss,learned_process_model)
 
         # -------------------------- (2) --------------------------------------
         # Instantiate the desired filter cell
@@ -434,7 +434,7 @@ class FilterApplication(tf.keras.Model):
         out = tf.stack([ct, st], axis=-1)
         return out
 
-    def __call__(self, inputs, training=True):
+    def __call__(self, inputs , training=True):
         """
         Run one step of prediction with the model
 
@@ -453,15 +453,17 @@ class FilterApplication(tf.keras.Model):
             the prediction output
 
         """
-
-        mu = self.theta_to_2D(inputs[:, 0])
+        raw_observations,control,init_pose = inputs
+        mu = self.theta_to_2D(init_pose)
         tensor_start = tf.constant(0, dtype=tf.float64)
         tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
-        samples_ = tf.expand_dims((tf.linspace(tensor_start, tensor_stop, self.grid_size),0))
+        samples_ = tf.expand_dims(tf.linspace(tensor_start, tensor_stop, self.grid_size),0)
         samples_batched = tf.tile(samples_, [self.batch_size, 1])
 
         init_state = (tf.reshape(tf.convert_to_tensor(self.compute_energy(samples_batched, mu)),
                                  [self.batch_size, -1]), tf.zeros([self.batch_size, 1]))
+
+        inputs = (raw_observations, control)
 
         outputs = self.rnn_layer(inputs, training=training, initial_state=init_state)
 
@@ -509,6 +511,10 @@ def main():
     parser.add_argument('--learning_rate', dest='learning_rate',
                         type=float, default=1e-3,
                         help='learning rate of the neural network')
+    parser.add_argument('--learned_process_model', dest='learned_process_model',
+                        type=bool, default=True,
+                        help='flag set to true will learn the process model')
+
 
     args = parser.parse_args()
 
@@ -526,9 +532,15 @@ def main():
     os.environ["PYTHONHASHSEED"] = str(seed)
     tf.print(f"Random seed set as {seed}")
 
-    wandb.init(config=args)
+    # wandb.init(config=args)
+    wandb.init(
+        project = "differential-hef",
+        entity ="korra141",
+        tags = ["version_3"],
+        config = args
+    )
 
-    run_example(args.filter, args.loss, args.out_dir, args.batch_size, args.grid_size,args.trajectory_length, args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,args.learning_rate)
+    run_example(args.filter, args.loss, args.out_dir, args.batch_size, args.grid_size,args.trajectory_length, args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,args.learning_rate,args.learned_process_model)
 
 
 if __name__ == "__main__":
