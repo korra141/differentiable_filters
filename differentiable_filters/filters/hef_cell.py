@@ -77,8 +77,8 @@ class HEFCell(base.FilterCellBase):
 
             energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
             # predict the next state
-            process_energy_samples = self.context.run_process_model(energy_samples_old,control,training)
-            pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
+            process_energy_samples = self.context.run_process_model(control,energy_samples_old,training)
+            pred_state_eta,pred_state_energy = self.prediction(energy_samples_old,process_energy_samples)
 
 
             z_pred_energy = self.context.run_observation_model(observations,
@@ -87,7 +87,7 @@ class HEFCell(base.FilterCellBase):
 
             ###################################################################
             # update the predictions with the observations
-            state_up = self._update(pred_state_eta, z_pred_energy)
+            state_up = self.update(pred_state_eta, z_pred_energy)
             state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
             z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
             pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
@@ -103,7 +103,7 @@ class HEFCell(base.FilterCellBase):
 
 
             return output, new_state
-    def _prediction_step(self,energy_samples_old,process_energy_samples):
+    def prediction(self,energy_samples_old,process_energy_samples):
         ln_z_1 = self.calculate_normalisation_const(energy_samples_old)
         ln_z_2 = self.calculate_normalisation_const(process_energy_samples)
 
@@ -119,6 +119,9 @@ class HEFCell(base.FilterCellBase):
 
         return eta, energy
 
+    def check():
+        print("1")
+
 
     def calculate_normalisation_const(self,energy):
         # import pdb;pdb.set_trace()
@@ -129,7 +132,7 @@ class HEFCell(base.FilterCellBase):
         return ln_z_
 
 
-    def _update(self, prior_eta, measurement_model):
+    def update(self, prior_eta, measurement_model):
         eta_update =  prior_eta + self.convert_from_energy_eta(measurement_model)
         return self.convert_from_eta_energy(eta_update)
 

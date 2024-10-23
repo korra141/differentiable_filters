@@ -10,7 +10,7 @@ from lie_learn.spaces.Tn import linspace
 import math
 
 
-def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
+def plot_s1_func(f, color,legend=None, ax=None,plot_type: str = 'polar'):
     if ax is None:
         _, ax = plt.subplots(1, 1)
 
@@ -24,7 +24,7 @@ def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
     # First plot the support of the distributions S^1
     tensor_start = tf.constant(0, dtype=tf.float64)
     tensor_stop = tf.constant(2 * math.pi, dtype=tf.float64)
-    theta = tf.linspace(tensor_start, tensor_stop, bandwidth)
+    theta = tf.linspace(tensor_start, tensor_stop, bandwidth + 1)[:-1]
     theta = tf.concat([theta, theta[0, None]], 0)
 
     ct = tf.math.cos(theta)
@@ -46,11 +46,11 @@ def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
         # Concat first element to close function
         f_bar = tf.concat([f_bar, f_bar[0,None]],0)
         # Use only real components of the function and offset to unit radius
-        f_real = tf.math.real(f_bar) * 0.5 + radii
+        f_real = tf.math.real(f_bar) + radii
         f_x = ct * f_real
         f_y = st * f_real
         # Plot circle using x and y coordinates
-        ax.plot(f_x, f_y, '-', lw=3, alpha=0.5, label=legend[i])
+        ax.plot(f_x, f_y, '-', lw=3, alpha=0.5, label=legend[i],color=next(color))
     # Only set axis off for polar plot
     plt.axis('off')
     # Set aspect ratio to equal, to create a perfect circle
@@ -60,9 +60,9 @@ def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
     ax.text(-1.15, 0, r'$\pi$', style='italic', fontsize=15)
     ax.text(0, 1.12, r'$\frac{\pi}{2}$', style='italic', fontsize=20)
     ax.text(0, -1.12, r'$-\frac{\pi}{2}$', style='italic', fontsize=20)
-    return ax
+    return ax,color
 
-def plot_s1_energy(energy_samples_list,
+def plot_s1_energy(energy_samples_list,color,
                      legend=None,
                      ax=None,
                      plot_type: str = 'polar'):
@@ -70,10 +70,11 @@ def plot_s1_energy(energy_samples_list,
 
     f = []
     for energy_samples in energy_samples_list:
-
+        grid_size = energy_samples.shape[0]
+        # print(grid_size)
         maximum = tf.math.reduce_max(energy_samples)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
-        ln_z_ = tf.math.real(tf.math.log(moments[0] / math.pi))  + maximum
+        ln_z_ = tf.math.real(tf.math.log(moments[0] /(math.pi*grid_size*math.pi/62)))  + maximum
         prob = tf.math.exp(energy_samples - ln_z_)
         f.append(prob)
-    return plot_s1_func(f, legend, ax, plot_type)
+    return plot_s1_func(f,color, legend, ax,plot_type)
