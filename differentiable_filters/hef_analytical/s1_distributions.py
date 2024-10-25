@@ -78,10 +78,10 @@ class S1(HarmonicExponentialDistribution, metaclass=ABCMeta):
         # Inverse shift FFT as default method shifts it
         unnormalized_moments = ifftshift(unnormalized_moments)
         # Scale by invariant haar measure
-        unnormalized_moments[:,:,0] *= np.pi * 2
+        unnormalized_moments[:,0] *= np.pi * 2
         # Assign moments and log partition function - TODO this bandwidth shoulds be actually samples
-        moments = unnormalized_moments[:,:,1:self.fft.bandwidth + 1] / unnormalized_moments[:,:,0]
-        l_n_z = np.log(unnormalized_moments[:,:,0])[..., np.newaxis] + maximum
+        moments = unnormalized_moments[:,1:self.fft.bandwidth + 1] / unnormalized_moments[:,0][..., np.newaxis]
+        l_n_z = np.log(unnormalized_moments[:,0])[..., np.newaxis] + maximum
         # Update moments of distribution and constant only when needed
         if update:
             self.moments = moments
@@ -137,7 +137,8 @@ class S1Gaussian(S1):
 
     def compute_energy(self, theta):
         x = self.theta_to_2D(theta)
-        angle = np.arccos(np.einsum('pmnk,pmmk->pmn',x,self.mu))  # r = 1 for both so no denominator needed
+        # pdb.set_trace()
+        angle = np.arccos(np.einsum('pnk,pmmk->pn',x,self.mu))  # r = 1 for both so no denominator needed
         return -0.5 * np.power(angle, 2) / self.cov
         # return -1.0 / 2.0 * np.power(angle / self.cov, 2)
 

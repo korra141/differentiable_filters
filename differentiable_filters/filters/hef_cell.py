@@ -124,7 +124,7 @@ class HEFCell(base.FilterCellBase):
         # import pdb;pdb.set_trace()
         maximum = tf.expand_dims(tf.math.reduce_max(energy, axis=1), 1)
         moments = tf.signal.rfft(tf.exp(energy - maximum))
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / math.pi)), 1) + maximum
+        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))), 1) + maximum
 
         return ln_z_
 
@@ -135,7 +135,7 @@ class HEFCell(base.FilterCellBase):
 
     def convert_moments_eta_energy(self,moments):
         prob = tf.signal.irfft(moments)
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / math.pi)),1)
+        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))),1)
         prob_real = tf.math.real(prob)
         prob_process = tf.where(prob_real>0,prob_real,1e-8)
         energy = tf.math.log(prob_process) + ln_z_

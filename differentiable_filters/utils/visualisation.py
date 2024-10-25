@@ -46,7 +46,7 @@ def plot_s1_func(f, legend=None, ax=None, plot_type: str = 'polar'):
         # Concat first element to close function
         f_bar = tf.concat([f_bar, f_bar[0,None]],0)
         # Use only real components of the function and offset to unit radius
-        f_real = tf.math.real(f_bar) * 0.5 + radii
+        f_real = tf.math.real(f_bar) + radii
         f_x = ct * f_real
         f_y = st * f_real
         # Plot circle using x and y coordinates
@@ -70,10 +70,10 @@ def plot_s1_energy(energy_samples_list,
 
     f = []
     for energy_samples in energy_samples_list:
-
+        grid_size = energy_samples.shape[0]
         maximum = tf.math.reduce_max(energy_samples)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
-        ln_z_ = tf.math.real(tf.math.log(moments[0] / math.pi))  + maximum
+        ln_z_ = tf.math.real(tf.math.log(moments[0] /(math.pi * grid_size * math.pi / 62)))  + maximum
         prob = tf.math.exp(energy_samples - ln_z_)
         f.append(prob)
     return plot_s1_func(f, legend, ax, plot_type)

@@ -12,6 +12,7 @@ differentiable_filters/utils/function_learning/
 *.out
 *.swp
 .idea/
+data/
 # C extensions
 *.so
 

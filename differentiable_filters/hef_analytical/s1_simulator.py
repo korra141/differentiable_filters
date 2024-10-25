@@ -35,13 +35,13 @@ class S1Simulator(Simulator):
                           samples=self.samples,
                           fft=self.fft)
 
-    def measurement(self) -> S1:
+    def measurement(self,measurement) -> S1:
         """
         Simulate measurement
         :return: S1 Distribution of measurement model.
         """
         # Jitter measurement with noise and make sure theta is between 0 and 2pi
-        noisy_measurement = (self.theta + np.random.normal(0.0, self.measurement_noise, self.theta.shape)) % (2 * np.pi)
+        noisy_measurement = (measurement + np.random.normal(0.0, self.measurement_noise, measurement.shape)) % (2 * np.pi)
         return S1Gaussian(mu_theta=noisy_measurement,
                           cov=self.measurement_cov,
                           samples=self.samples,
