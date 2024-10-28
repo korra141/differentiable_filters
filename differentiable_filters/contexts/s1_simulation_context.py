@@ -9,7 +9,7 @@ from differentiable_filters.contexts import base_context as base
 
 
 class S1ToyContext(base.BaseContext):
-    def __init__(self, batch_size, filter_type, grid_size, motion_noise, measurement_noise, loss, learned_process_model,
+    def __init__(self, batch_size, filter_type, grid_size, motion_noise, measurement_noise, learned_process_model,
                  learned_measurement_model):
         """
         Minimal example context for the simulated disc tracking task on S1. A context
@@ -55,9 +55,8 @@ class S1ToyContext(base.BaseContext):
         self.zeroth_freq_index = math.floor(self.grid_size / 2)
         self.motion_noise = motion_noise
         self.measurement_noise = measurement_noise
-        self.loss = loss
-        if learned_measurement_model:
-            self.observation_model = ObservationModel(self.batch_size, self.grid_size)
+        #if learned_measurement_model:
+         #   self.observation_model = ObservationModel(self.batch_size, self.grid_size)
         if learned_process_model:
             self.process_model = ProcessModel(self.grid_size, self.batch_size)
         self.dim_x = None
@@ -83,11 +82,11 @@ class S1ToyContext(base.BaseContext):
 
         """
         # pdb.set_trace()
-        if self.learned_measurement_model:
-            out = self.observation_model(state, training)
-        else:
-            state = tf.cast(state, tf.float32)
-            out = self.analytical_model(state, self.measurement_noise)
+#        if self.learned_measurement_model:
+ #           out = self.observation_model(state, training)
+  #      else:
+        state = tf.cast(state, tf.float32)
+        out = self.analytical_model(state, self.measurement_noise)
         return out
 
     ###########################################################################
@@ -127,13 +126,14 @@ class S1ToyContext(base.BaseContext):
         pose = label
 
         observation = data
-
+       # pdb.set_trace()
         nll_posterior = self.neg_log_likelihood((posterior_state, pose), self.grid_size)
         nll_likelihood = self.neg_log_likelihood((z_pred, pose), self.grid_size)
-
+        nll_pred = self.neg_log_likelihood((pred_state, pose), self.grid_size)
+        
         nl_loss_posterior = tf.reduce_mean(nll_posterior)
         nl_loss_measurement = tf.reduce_mean(nll_likelihood)
-
+        nl_loss_pred = tf.reduce_mean(nll_pred)
         # compute the mode of the distribution
         mode_pose_posterior = self.compute_mode_(posterior_state)
         mode_pose_pred = self.compute_mode_(pred_state)
@@ -164,13 +164,19 @@ class S1ToyContext(base.BaseContext):
         #     wd += la.losses
         # wd = tf.add_n(wd)
 
-        if self.loss == "nl_measurement":
+        if self.learned_process_model and self.learned_measurement_model:
+            print("e2e")
+            total = nl_loss_posterior
+        elif self.learned_process_model and not self.learned_measurement_model:
+            print("only process model")
+            total = nl_loss_pred
+        elif not self.learned_process_model and self.learned_measurement_model:
+            print("only measurement_model")
             total = nl_loss_measurement
         else:
-            total = nl_loss_posterior
+            print("not learning")
+            total = 0
         # total = tf.reduce_mean(mse_obs) + wd
-        if tf.math.reduce_any(tf.math.is_nan(total)):
-            pdb.set_trace()
         metrics = [total, nl_loss_posterior, nl_loss_measurement, ate_mode_post, ate_mode_pred, ate_mode_meas,
                    mae_mode_post, mae_mode_pred, mae_mode_meas, diff_mode_pose_posterior, diff_mode_pose_pred,
                    diff_mode_obs,
@@ -203,7 +209,7 @@ class S1ToyContext(base.BaseContext):
 
         maximum = tf.expand_dims(tf.math.reduce_max(energy_samples, axis=2), 2)
         moments = tf.signal.rfft(tf.exp(energy_samples - maximum))
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, :, 0] / math.pi)), 2) + maximum
+        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, :, 0] / (math.pi * self.grid_size * math.pi / 62))), 2) + maximum
         dim = energy_samples.shape[1]
         tensor_start = tf.constant(0, dtype=tf.float32)
         tensor_stop = tf.constant(2 * math.pi, dtype=tf.float32)
@@ -278,7 +284,7 @@ class S1ToyContext(base.BaseContext):
     def analytical_model(self, value, noise):
         return tf.reshape(self.energy(value, noise), [self.batch_size, self.grid_size])
 
-
+"""
 class ObservationModel(tf.keras.Model):
     def __init__(self, batch_size, grid_size):
         super().__init__()
@@ -296,7 +302,7 @@ class ObservationModel(tf.keras.Model):
 
     def call(self, input, training):
         return self.model(input, training=training)
-
+"""
 
 # def add_noise_model(self, input_shape):
 #     """
@@ -344,24 +350,21 @@ class ProcessModel(tf.keras.Model):
             tf.keras.layers.Dense(
                 units=32,
                 activation=tf.nn.relu,
-                kernel_initializer=tf.initializers.glorot_normal(),
-                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #kernel_initializer=tf.initializers.glorot_normal(),
+                kernel_initializer='random_normal',
+                bias_initializer='zeros',
+                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
                 name='process_fc1'),
-            tf.keras.layers.Dense(
-                units=64,
-                activation=tf.nn.relu,
-                kernel_initializer=tf.initializers.glorot_normal(),
-                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                name='process_fc2'),
             tf.keras.layers.Dense(
                 units=self.grid_size,
                 activation=None,
-                kernel_initializer=tf.initializers.glorot_normal(),
-                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                name='process_fc3'),
+                #kernel_initializer=tf.initializers.glorot_normal(),
+                kernel_initializer='random_normal',
+                bias_initializer='zeros',
+                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                name='process_fc2'),
         ])
 
     def call(self, input=None, training=None):

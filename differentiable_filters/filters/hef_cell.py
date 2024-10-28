@@ -99,7 +99,8 @@ class HEFCell(base.FilterCellBase):
 
             output = (state, z_pred_energy, pred_state_energy)
 
-
+            if tf.math.reduce_any(tf.math.is_nan(pred_state_energy)):
+                print("The process model is outputting nan")
 
 
             return output, new_state

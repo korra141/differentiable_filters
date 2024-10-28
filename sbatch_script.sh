@@ -30,5 +30,5 @@ wandb login 8ffe865c4b82a4e1f84ebcf8cc9681892e828854
 unset CUDA_VISIBLE_DEVICES
 
 # Execute Python script
-wandb agent korra141/differential-hef/l8mtcajd
+wandb agent korra141/differential-hef/0dmjgj11
 python differentiable_filters/example_training_code/run_example.py

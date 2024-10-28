@@ -150,7 +150,7 @@ def load_data(data_dir, data_name,train_size, batch_size):
     return train_set, val_set, test_set
 
 
-def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_length, motion_noise,
+def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, motion_noise,
                 measurement_noise, train_size, initial_cov, epochs, n_traj, learning_rate, learned_process_model,
                 learned_measurement_model, data_dir):
     """
@@ -194,6 +194,7 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
     time_ = time.strftime("%Y_%m_%d_%H_%M_%S")
 
     train_dir = os.path.join(out_dir, uuid + time_ + '/train')
+    print(train_dir)
     # data_dir = os.path.join(out_dir + '/data')
     fig_dir = os.path.join(out_dir, uuid + time_ + '/fig')
     if not os.path.exists(train_dir):
@@ -202,7 +203,7 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
         os.makedirs(fig_dir)
 
     debug = False
-    context = S1ToyContext(batch_size, filter_type, grid_size, motion_noise, measurement_noise, loss,
+    context = S1ToyContext(batch_size, filter_type, grid_size, motion_noise, measurement_noise,
                            learned_process_model, learned_measurement_model)
 
     model = FilterApplication(context, filter_type, initial_cov, debug)
@@ -214,7 +215,7 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
     starting_positions = np.linspace(0, 2 * np.pi, n_samples, endpoint=False)
     name = "simple_linear_data"
     file_path = os.path.join(data_dir, 's1_data')
-    pdb.set_trace()
+    #pdb.set_trace()
     if os.listdir(file_path) == []:
         train_path,val_path,test_path = create_and_save_datasets(starting_positions, trajectory_length, control_step, measurement_noise, train_size,
                                  val_size, test_size, file_path, name)
@@ -255,23 +256,26 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
     for epoch in range(epochs):
         print("\nStart of epoch %d \n" % (epoch))
         print("Validating ...")
-        dict_val = evaluate(model, val_set, "validate", batch_size, trajectory_length, n_traj, control_step, fig_dir)
+        dict_val = evaluate(model, val_set, epoch, "validate", batch_size, trajectory_length, n_traj, control_step, fig_dir)
         running_loss = 0
         for (x_batch_train, y_batch_train) in train_set:
-
+            print("Training...")
             start = time.time()
             control = tf.ones_like(x_batch_train) * control_step
-            input = (x_batch_train, control, y_batch_train[:, 0])
+            input_ = (x_batch_train, control, y_batch_train[:, 0])
 
             with tf.GradientTape() as tape:
-                out = model(input)
-
+                out = model(input_)
+                #if tf.math.reduce_any(tf.math.is_nan(out[2])):
+               # pdb.set_trace()
                 loss_value, metrics, metric_names = \
                     model.context.get_loss(x_batch_train, y_batch_train, out)
 
                 running_loss += loss_value.numpy().item()
+                if tf.math.reduce_any(tf.math.is_nan(loss_value)):
+                    pdb.set_trace()
                 grads = tape.gradient(loss_value, model.trainable_weights)
-
+                
                 if (custom_step % 50 == 0):
                     # pdb.set_trace()
                     dict = {}
@@ -308,7 +312,7 @@ def run_example(filter_type, loss, out_dir, batch_size, grid_size, trajectory_le
     print("\n Testing")
     out_analytical_hef = lambda x, y: run_hef_analytical(x, y, control_step, grid_size, motion_noise,
                                                          measurement_noise, initial_cov)
-    test_dict = evaluate(model, test_set, "test", batch_size, trajectory_length, n_traj, control_step, fig_dir,
+    test_dict = evaluate(model, test_set,0, "test", batch_size, trajectory_length, n_traj, control_step, fig_dir,
                          out_analytical_hef)
     wandb.log(test_dict)
     wandb.finish()
@@ -384,7 +388,7 @@ def reset_weights(model):
             var.assign(initializer(var.shape, var.dtype))
 
 
-def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,
+def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,
              out_analytical_hef=None):
     """
     Evaluates the model on the given dataset (without training)
@@ -409,8 +413,8 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
     plotting_dict = {}
     for step, (x_batch, y_batch) in enumerate(dataset):
         control = tf.ones_like(x_batch) * control_step
-        input = (x_batch, control, y_batch[:, 0])
-        out = model(input, training=False)
+        input_ = (x_batch, control, y_batch[:, 0])
+        out = model(input_, training=False)
         plotting_dict['hef_diff'] = out
 
         loss_value, metrics, metric_names = \
@@ -427,7 +431,7 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
                 for ind, k in enumerate(metric_names_analytical):
                     outputs_analytical[k].append(metrics_analytical[ind])
         plotting_figure(plotting_dict, y_batch, x_batch, n_traj, batch_size, folder_name, step, trajectory_length,
-                        frequency_iter=3)
+                        type,epoch,frequency_iter=3)
 
         if step == 0:
             for ind, k in enumerate(metric_names):
@@ -453,7 +457,7 @@ def evaluate(model, dataset, type, batch_size, trajectory_length, n_traj, contro
 
 
 def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_name, batch_no, trajectory_length,
-                    frequency_iter=3):
+                    type,epoch,frequency_iter=3):
     # p db.set_trace()
     list_idx = random.sample(range(0, batch_size), n_traj)
     measurement = label
@@ -474,7 +478,7 @@ def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_n
                         label="measurement data")
                 ax.set_title(f"Trajectory {list_idx[i]} Iteration {traj}", loc='center')
                 ax.legend(bbox_to_anchor=(0.85, 1), loc='upper left', fontsize='x-small')
-                plt.savefig(f"{folder_name}/s1_hef_{batch_no}_traj_{list_idx[i]}_iter{traj}.png", format='png', dpi=300)
+                plt.savefig(f"{folder_name}/s1_hef_{type}_{epoch}_{batch_no}_traj_{list_idx[i]}_iter{traj}.png", format='png', dpi=300)
                 plt.close()
 
 
@@ -615,13 +619,10 @@ def main():
     parser.add_argument('--filter', dest='filter', type=str,
                         default='hef',
                         help='which filter class to use')
-    parser.add_argument('--loss', dest='loss', type=str,
-                        default='nll',
-                        help='which loss function to use')
     parser.add_argument('--batch_size', dest='batch_size',
                         type=int, default=16, help='batch size for training')
     parser.add_argument('--grid_size', dest='grid_size', type=int,
-                        default=20,
+                        default=30,
                         help='bandwidth of the harmonic exponential distribution')
     parser.add_argument('--trajectory_length', dest='trajectory_length', type=int,
                         default=30,
@@ -633,13 +634,13 @@ def main():
                         default=0.1,
                         help='measurement noise to create observations in the dataset')
     parser.add_argument('--train_size', dest='train_size', type=int,
-                        default=480,
+                        default=100,
                         help='length of the training dataset')
     parser.add_argument('--initial_cov', dest='initial_cov', type=float,
                         default=0.1,
                         help='noise around the starting state fed as a prior to the model')
     parser.add_argument('--epochs', dest='epochs', type=int,
-                        default=1,
+                        default=20,
                         help='no of times the model is trained for the complete dataset')
     parser.add_argument('--seed', dest='seed',
                         type=int, default=12345,
@@ -648,14 +649,14 @@ def main():
                         type=int, default=5,
                         help='number of trajectories to plot per batch for evaluation')
     parser.add_argument('--learning_rate', dest='learning_rate',
-                        type=float, default=1e-3,
+                        type=float, default=1e-5,
                         help='learning rate of the neural network')
     parser.add_argument('--learned_process_model', dest='learned_process_model',
                         type=int, choices=[0, 1], default=1,
                         help='flag set to true will learn the process model')
     parser.add_argument('--learned_measurement_model', dest='learned_measurement_model', type=int, choices=[0, 1],
-                        default=1)
-    parser.add_argument('--data_dir', dest='data_dir', type=str, help='path to data directory')
+                        default=0)
+    parser.add_argument('--data_dir', dest='data_dir',default='data', type=str, help='path to data directory')
 
     args = parser.parse_args()
 
@@ -677,7 +678,7 @@ def main():
     wandb.init(
         project="differential-hef",
         entity="korra141",
-        tags=["version_3"],
+        tags=["version_4"],
         config=args
     )
     code = wandb.Artifact('project-source', type='code')
@@ -685,7 +686,7 @@ def main():
         code.add_file(path)
     wandb.run.use_artifact(code)
 
-    run_example(args.filter, args.loss, args.out_dir, args.batch_size, args.grid_size, args.trajectory_length,
+    run_example(args.filter,args.out_dir, args.batch_size, args.grid_size, args.trajectory_length,
                 args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,
                 args.learning_rate, args.learned_process_model, args.learned_measurement_model, args.data_dir)
 
