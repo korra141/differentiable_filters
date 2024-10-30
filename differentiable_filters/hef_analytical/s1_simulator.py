@@ -30,7 +30,7 @@ class S1Simulator(Simulator):
         self.theta = (self.theta + self.step)
         # Jitter step with noise and wrap theta between 0 and 2pi
         noisy_prediction = (self.step + np.random.normal(0.0, self.motion_noise, self.theta.shape)) % (2 * np.pi)
-        return S1Gaussian(mu_theta=noisy_prediction,
+        return S1Gaussian(mu_theta= noisy_prediction,
                           cov=self.motion_cov,
                           samples=self.samples,
                           fft=self.fft)
@@ -41,8 +41,8 @@ class S1Simulator(Simulator):
         :return: S1 Distribution of measurement model.
         """
         # Jitter measurement with noise and make sure theta is between 0 and 2pi
-        noisy_measurement = (measurement + np.random.normal(0.0, self.measurement_noise, measurement.shape)) % (2 * np.pi)
-        return S1Gaussian(mu_theta=noisy_measurement,
+        #noisy_measurement = (measurement + np.random.normal(0.0, self.measurement_noise, measurement.shape)) % (2 * np.pi)
+        return S1Gaussian(mu_theta=measurement,
                           cov=self.measurement_cov,
                           samples=self.samples,
                           fft=self.fft)

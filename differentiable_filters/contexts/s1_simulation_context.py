@@ -55,15 +55,15 @@ class S1ToyContext(base.BaseContext):
         self.zeroth_freq_index = math.floor(self.grid_size / 2)
         self.motion_noise = motion_noise
         self.measurement_noise = measurement_noise
-        #if learned_measurement_model:
-         #   self.observation_model = ObservationModel(self.batch_size, self.grid_size)
-        if learned_process_model:
-            self.process_model = ProcessModel(self.grid_size, self.batch_size)
+        if learned_measurement_model:
+            self.observation_model = ObservationModel(self.batch_size, self.grid_size)
+        #if learned_process_model:
+         #   self.process_model = ProcessModel(self.grid_size, self.batch_size)
         self.dim_x = None
         self.dim_z = None
         self.dim_u = None
 
-    def run_observation_model(self, state, training):
+    def run_observation_model(self, state, observations,  training):
         """
         Predicts the observations for a given state
 
@@ -82,26 +82,27 @@ class S1ToyContext(base.BaseContext):
 
         """
         # pdb.set_trace()
-#        if self.learned_measurement_model:
- #           out = self.observation_model(state, training)
-  #      else:
-        state = tf.cast(state, tf.float32)
-        out = self.analytical_model(state, self.measurement_noise)
+        if self.learned_measurement_model:
+            joint_input = tf.keras.layers.Concatenate(axis=1)([state,observations])
+            out = self.observation_model(joint_input,  training)
+            
+        else:
+            observations = tf.cast(observations, tf.float32)
+            out = self.analytical_model(observations, self.measurement_noise)
         return out
 
     ###########################################################################
     # process model
     ###########################################################################
-    def run_process_model(self, old_state, control, training):
+    def run_process_model(self, control, training):
         """
         Predicts the next state given the old state and actions performed
 
         """
-        if self.learned_process_model:
-            joint_input = tf.keras.layers.Concatenate(axis=1)([old_state, control])
-            out = self.process_model(joint_input, training)
-        else:
-            out = self.analytical_model(control, self.motion_noise)
+        #if self.learned_process_model:
+         #   out = self.process_model(control, training)
+        #else:
+        out = self.analytical_model(control, self.motion_noise)
         return out
 
     ###########################################################################
@@ -178,15 +179,10 @@ class S1ToyContext(base.BaseContext):
             total = 0
         # total = tf.reduce_mean(mse_obs) + wd
         metrics = [total, nl_loss_posterior, nl_loss_measurement, ate_mode_post, ate_mode_pred, ate_mode_meas,
-                   mae_mode_post, mae_mode_pred, mae_mode_meas, diff_mode_pose_posterior, diff_mode_pose_pred,
-                   diff_mode_obs,
-                   mode_pose_posterior, mode_pose_pred, mode_obs]
+                   mae_mode_post, mae_mode_pred, mae_mode_meas]
         metric_names = ["total", "nl_loss_posterior", "nl_loss_measurement", "ate_mode_post", "ate_mode_pred",
                         "ate_mode_meas",
-                        "mae_mode_post", "mae_mode_pred", "mae_mode_meas", "diff_mode_pose_posterior",
-                        "diff_mode_pose_pred",
-                        "diff_mode_obs",
-                        "mode_pose_posterior", "mode_pose_pred", "mode_obs"]
+                        "mae_mode_post", "mae_mode_pred", "mae_mode_meas"]
         return total, metrics, metric_names
 
     # def compute_mean_S1(self, energy_samples):
@@ -284,7 +280,7 @@ class S1ToyContext(base.BaseContext):
     def analytical_model(self, value, noise):
         return tf.reshape(self.energy(value, noise), [self.batch_size, self.grid_size])
 
-"""
+
 class ObservationModel(tf.keras.Model):
     def __init__(self, batch_size, grid_size):
         super().__init__()
@@ -302,7 +298,7 @@ class ObservationModel(tf.keras.Model):
 
     def call(self, input, training):
         return self.model(input, training=training)
-"""
+
 
 # def add_noise_model(self, input_shape):
 #     """
@@ -328,44 +324,44 @@ class ObservationModel(tf.keras.Model):
 
 class ProcessModel(tf.keras.Model):
     """
-        Arguments:
-            grid_size: bandwidth of the filter
-            step: Assumes constant step between two poses, x_t+1 = x_t + step
-            motion_noise: Helps add uncertainity the step making it a stochastic process
-            batch_size: training samples used to train the process model
+       Arguments:
+           grid_size: bandwidth of the filter
+           step: Assumes constant step between two poses, x_t+1 = x_t + step
+           motion_noise: Helps add uncertainity the step making it a stochastic process
+           batch_size: training samples used to train the process model
 
-        Output:
-            Outputs the energy of the state transition function.
+       Output:
+           Outputs the energy of the state transition function.
 
         Currently this class is not learning the process model through data but assumes a wrapped normal gaussian distribution to represent p_u(x_t - x_t-1)
-    """
-
+   """
     def __init__(self, grid_size, batch_size):
-        super().__init__()
-        self.grid_size = grid_size
-        self.batch_size = batch_size
+       super().__init__()
+       self.grid_size = grid_size
+       self.batch_size = batch_size
 
     def build(self, input_shape=None):
-        self.model = tf.keras.Sequential([
-            tf.keras.layers.Dense(
-                units=32,
-                activation=tf.nn.relu,
+       self.model = tf.keras.Sequential([
+           tf.keras.layers.Dense(
+               units=32,
+               activation=tf.nn.relu,
                 #kernel_initializer=tf.initializers.glorot_normal(),
-                kernel_initializer='random_normal',
-                bias_initializer='zeros',
-                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                #bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                name='process_fc1'),
-            tf.keras.layers.Dense(
-                units=self.grid_size,
-                activation=None,
-                #kernel_initializer=tf.initializers.glorot_normal(),
-                kernel_initializer='random_normal',
-                bias_initializer='zeros',
-                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                #bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+               kernel_initializer='random_normal',
+               bias_initializer='zeros',
+                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+               name='process_fc1'),
+           tf.keras.layers.Dense(
+               units=self.grid_size,
+               activation=None,
+               # kernel_initializer=tf.initializers.glorot_normal(),
+               kernel_initializer='random_normal',
+               bias_initializer='zeros',
+                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
                 name='process_fc2'),
-        ])
+       ])
 
     def call(self, input=None, training=None):
-        return self.model(input, training=training)
+       return self.model(input, training=training)
+

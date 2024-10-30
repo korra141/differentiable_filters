@@ -19,7 +19,7 @@ print("Base path:", base_path)
 from differentiable_filters.contexts.s1_simulation_context import S1ToyContext
 import wandb
 import random
-from differentiable_filters.utils import recordio as tfr
+from differentiable_filters.utils.video_generation import generate_video_from_images
 from differentiable_filters.utils.visualisation import plot_s1_energy
 import matplotlib.pyplot as plt
 from differentiable_filters.hef_analytical.filter import BayesFilter
@@ -197,6 +197,8 @@ def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, 
     print(train_dir)
     # data_dir = os.path.join(out_dir + '/data')
     fig_dir = os.path.join(out_dir, uuid + time_ + '/fig')
+    video_dir = os.path.join(out_dir, uuid + time_ + '/video')
+
     if not os.path.exists(train_dir):
         os.makedirs(train_dir)
     if not os.path.exists(fig_dir):
@@ -223,51 +225,21 @@ def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, 
     else:
         train_set, val_set, test_set = load_data(file_path, name, train_size, batch_size)
 
-    # true_trajectories = np.ndarray((n_samples, trajectory_length))
-    # measurements = np.ndarray((n_samples, trajectory_length))
-
-    # for i in range(n_samples):
-    #     theta = starting_positions[i]  # starting position
-    #     for j in range(trajectory_length):
-    #         true_trajectories[i][j] = theta % (2 * np.pi)
-    #         measurements[i][j] = (theta + np.random.normal(0.0, measurement_noise, 1).item()) % (2 * np.pi)
-    #         theta = theta + control_step
-    # measurements_ = tf.expand_dims(tf.convert_to_tensor(measurements),2)
-    # ground_truth_ = tf.expand_dims(tf.convert_to_tensor(true_trajectories),2)
-    #
-    # train_dataset = tf.data.Dataset.from_tensor_slices((measurements_[:train_size],ground_truth_[:train_size]))
-    # train_set = train_dataset.shuffle(train_size).batch(batch_size, drop_remainder=True)
-    #
-    # val_dataset = tf.data.Dataset.from_tensor_slices(
-    #     ( measurements_[train_size:train_size + val_size],ground_truth_[train_size:train_size + val_size]))
-    # val_set = val_dataset.batch(batch_size, drop_remainder=True)
-    #
-    #
-    # test_dataset = tf.data.Dataset.from_tensor_slices(
-    #     (measurements_[train_size + val_size:],ground_truth_[train_size + val_size:]))
-    # test_set = test_dataset.batch(batch_size, drop_remainder=True)
-
-    # prepare the training
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     custom_step = 0
-
-    # run_name = "s1_diff_hef_filter_" + uuid
-
     for epoch in range(epochs):
         print("\nStart of epoch %d \n" % (epoch))
         print("Validating ...")
-        dict_val = evaluate(model, val_set, epoch, "validate", batch_size, trajectory_length, n_traj, control_step, fig_dir)
+        dict_val = evaluate(model, val_set, epoch, "validate", batch_size, trajectory_length, n_traj, control_step, motion_noise, fig_dir)
         running_loss = 0
         for (x_batch_train, y_batch_train) in train_set:
             print("Training...")
             start = time.time()
-            control = tf.ones_like(x_batch_train) * control_step
+            control = tf.ones_like(x_batch_train) * control_step +  tf.random.normal(x_batch_train.shape,0,motion_noise)
             input_ = (x_batch_train, control, y_batch_train[:, 0])
 
             with tf.GradientTape() as tape:
                 out = model(input_)
-                #if tf.math.reduce_any(tf.math.is_nan(out[2])):
-               # pdb.set_trace()
                 loss_value, metrics, metric_names = \
                     model.context.get_loss(x_batch_train, y_batch_train, out)
 
@@ -277,7 +249,6 @@ def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, 
                 grads = tape.gradient(loss_value, model.trainable_weights)
                 
                 if (custom_step % 50 == 0):
-                    # pdb.set_trace()
                     dict = {}
                     for i, name in enumerate(metric_names):
                         dict[f'train/{name}'] = tf.reduce_mean(metrics[i])
@@ -312,10 +283,21 @@ def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, 
     print("\n Testing")
     out_analytical_hef = lambda x, y: run_hef_analytical(x, y, control_step, grid_size, motion_noise,
                                                          measurement_noise, initial_cov)
-    test_dict = evaluate(model, test_set,0, "test", batch_size, trajectory_length, n_traj, control_step, fig_dir,
+    test_dict = evaluate(model, test_set,0, "test", batch_size, trajectory_length, n_traj, control_step, motion_noise,fig_dir,
                          out_analytical_hef)
+
+    generate_video_from_images(fig_dir,video_dir, 1)
+
     wandb.log(test_dict)
     wandb.finish()
+
+def generate_video_from_images(image_folder,video_folder_path, fps):
+    if not os.path.exists(output_video_folder):
+        os.makedirs(output_video_folder)
+    # Get list of images in the folder
+    image_prefix_list = [f.replace(f.split("_")[-1],"") for f in os.listdir(image_folder) if f.endswith('.png')]
+    for image_prefix in image_prefix_list:
+        generate_video_from_images(image_folder, video_folder_path, image_prefix, fps)
 
 
 def run_hef_analytical(measurements, poses, step, grid_size, motion_noise, measurement_noise, initial_cov):
@@ -388,7 +370,7 @@ def reset_weights(model):
             var.assign(initializer(var.shape, var.dtype))
 
 
-def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, n_traj, control_step, folder_name=None,
+def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, control_step,motion_noise, folder_name=None,
              out_analytical_hef=None):
     """
     Evaluates the model on the given dataset (without training)
@@ -412,7 +394,7 @@ def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, n_traj
     metric_names = []
     plotting_dict = {}
     for step, (x_batch, y_batch) in enumerate(dataset):
-        control = tf.ones_like(x_batch) * control_step
+        control = tf.ones_like(x_batch) * control_step +  tf.random.normal(x_batch.shape,0,motion_noise)
         input_ = (x_batch, control, y_batch[:, 0])
         out = model(input_, training=False)
         plotting_dict['hef_diff'] = out
@@ -430,7 +412,7 @@ def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, n_traj
             else:
                 for ind, k in enumerate(metric_names_analytical):
                     outputs_analytical[k].append(metrics_analytical[ind])
-        plotting_figure(plotting_dict, y_batch, x_batch, n_traj, batch_size, folder_name, step, trajectory_length,
+        plotting_figure(plotting_dict, y_batch, x_batch, batch_size, folder_name, step, trajectory_length,
                         type,epoch,frequency_iter=3)
 
         if step == 0:
@@ -456,29 +438,29 @@ def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, n_traj
     return dict
 
 
-def plotting_figure(dict_predictions, label, input, n_traj, batch_size, folder_name, batch_no, trajectory_length,
+def plotting_figure(dict_predictions, label, input, batch_size, folder_name, batch_no, trajectory_length,
                     type,epoch,frequency_iter=3):
     # p db.set_trace()
-    list_idx = random.sample(range(0, batch_size), n_traj)
+    plotting_idx = random.sample(range(0, batch_size), 1)
     measurement = label
     trajectory = input
-    plt.style.use('seaborn-dark-palette')
-    for i in range(n_traj):
-        for traj in range(trajectory_length):
+    #plt.style.use('seaborn-dark-palette')
+
+    for traj in range(trajectory_length):
             if traj % frequency_iter == 0:
                 fig, ax = plt.subplots()
                 for key, outputs in dict_predictions.items():
                     posterior_state, z_pred, pred_state = outputs
                     ax = plot_s1_energy(
-                        [posterior_state[list_idx[i], traj], z_pred[list_idx[i], traj], pred_state[list_idx[i], traj]],
+                        [posterior_state[plotting_idx, traj], z_pred[plotting_idx, traj], pred_state[plotting_idx, traj]],
                         ax=ax, legend=[rf'{key}_posterior', rf'{key}_measurement', rf'{key}_prediction'])
-                ax.plot(tf.math.cos(trajectory[list_idx[i], traj]), tf.math.sin(trajectory[list_idx[i], traj]), 'o',
+                ax.plot(tf.math.cos(trajectory[plotting_idx, traj]), tf.math.sin(trajectory[plotting_idx, traj]), 'o',
                         label="pose data")
-                ax.plot(tf.math.cos(measurement[list_idx[i], traj]), tf.math.sin(measurement[list_idx[i], traj]), 'o',
+                ax.plot(tf.math.cos(measurement[plotting_idx, traj]), tf.math.sin(measurement[plotting_idx, traj]), 'o',
                         label="measurement data")
-                ax.set_title(f"Trajectory {list_idx[i]} Iteration {traj}", loc='center')
+                ax.set_title(f"Trajectory {plotting_idx} Iteration {traj}", loc='center')
                 ax.legend(bbox_to_anchor=(0.85, 1), loc='upper left', fontsize='x-small')
-                plt.savefig(f"{folder_name}/s1_hef_{type}_{epoch}_{batch_no}_traj_{list_idx[i]}_iter{traj}.png", format='png', dpi=300)
+                plt.savefig(f"{folder_name}/s1_hef_{type}_{epoch}_{batch_no}_traj_{plotting_idx}_iter{traj}.png", format='png', dpi=300)
                 plt.close()
 
 
@@ -652,10 +634,10 @@ def main():
                         type=float, default=1e-5,
                         help='learning rate of the neural network')
     parser.add_argument('--learned_process_model', dest='learned_process_model',
-                        type=int, choices=[0, 1], default=1,
+                        type=int, choices=[0, 1], default=0,
                         help='flag set to true will learn the process model')
     parser.add_argument('--learned_measurement_model', dest='learned_measurement_model', type=int, choices=[0, 1],
-                        default=0)
+                        default=1)
     parser.add_argument('--data_dir', dest='data_dir',default='data', type=str, help='path to data directory')
 
     args = parser.parse_args()
@@ -681,10 +663,10 @@ def main():
         tags=["version_4"],
         config=args
     )
-    code = wandb.Artifact('project-source', type='code')
-    for path in glob.glob(base_path + '**/*.py', recursive=True):
-        code.add_file(path)
-    wandb.run.use_artifact(code)
+    # code = wandb.Artifact('project-source', type='code')
+    # for path in glob.glob(base_path + '**/*.py', recursive=True):
+    #     code.add_file(path)
+    # wandb.run.use_artifact(code)
 
     run_example(args.filter,args.out_dir, args.batch_size, args.grid_size, args.trajectory_length,
                 args.motion_noise, args.measurement_noise, args.train_size, args.initial_cov, args.epochs, args.n_traj,

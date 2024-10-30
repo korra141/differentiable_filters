@@ -77,11 +77,11 @@ class HEFCell(base.FilterCellBase):
 
             energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
             # predict the next state
-            process_energy_samples = self.context.run_process_model(energy_samples_old,control,training)
+            process_energy_samples = self.context.run_process_model(control,training)
             pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
 
 
-            z_pred_energy = self.context.run_observation_model(observations,
+            z_pred_energy = self.context.run_observation_model(pred_state_energy,observations,
                                                            training=training)
 
 
