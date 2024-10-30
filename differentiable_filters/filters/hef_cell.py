@@ -43,7 +43,7 @@ class HEFCell(base.FilterCellBase):
     def output_size(self):
         """Integer or TensorShape: size of outputs produced by this cell."""
         # estimated state and covariance, observations, R, Q
-        return [[self.grid_size],[self.grid_size],[self.grid_size]]
+        return [[self.grid_size],[self.grid_size],[self.grid_size],[self.grid_size]]
 
     def call(self, inputs, states, training):
         """
@@ -77,7 +77,7 @@ class HEFCell(base.FilterCellBase):
 
             energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
             # predict the next state
-            process_energy_samples = self.context.run_process_model(control,training)
+            process_energy_samples = self.context.run_process_model(energy_samples_old, control,training)
             pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
 
 
@@ -91,7 +91,6 @@ class HEFCell(base.FilterCellBase):
             state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
             z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
             pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
-
 
             # the recurrent state contains the updated state estimate
             new_state = (state, step + 1)

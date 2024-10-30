@@ -4,8 +4,10 @@ import tensorflow_probability as tfp
 import numpy as np
 import math
 import pdb
+import os
 
 from differentiable_filters.contexts import base_context as base
+from differentiable_filters.utils.dataset_file import write_tfrecord
 
 
 class S1ToyContext(base.BaseContext):
@@ -57,8 +59,8 @@ class S1ToyContext(base.BaseContext):
         self.measurement_noise = measurement_noise
         if learned_measurement_model:
             self.observation_model = ObservationModel(self.batch_size, self.grid_size)
-        #if learned_process_model:
-         #   self.process_model = ProcessModel(self.grid_size, self.batch_size)
+        if learned_process_model:
+           self.process_model = ProcessModel(self.grid_size, self.batch_size)
         self.dim_x = None
         self.dim_z = None
         self.dim_u = None
@@ -94,15 +96,16 @@ class S1ToyContext(base.BaseContext):
     ###########################################################################
     # process model
     ###########################################################################
-    def run_process_model(self, control, training):
+    def run_process_model(self, old_state, control, training):
         """
         Predicts the next state given the old state and actions performed
 
         """
-        #if self.learned_process_model:
-         #   out = self.process_model(control, training)
-        #else:
-        out = self.analytical_model(control, self.motion_noise)
+        if self.learned_process_model:
+            joint_input = tf.keras.layers.Concatenate(axis=1)([old_state, control])
+            out = self.process_model(joint_input, training)
+        else:
+            out = self.analytical_model(control, self.motion_noise)
         return out
 
     ###########################################################################
@@ -124,17 +127,15 @@ class S1ToyContext(base.BaseContext):
         """
 
         posterior_state, z_pred, pred_state = prediction
+
         pose = label
 
         observation = data
-       # pdb.set_trace()
+
         nll_posterior = self.neg_log_likelihood((posterior_state, pose), self.grid_size)
         nll_likelihood = self.neg_log_likelihood((z_pred, pose), self.grid_size)
         nll_pred = self.neg_log_likelihood((pred_state, pose), self.grid_size)
-        
-        nl_loss_posterior = tf.reduce_mean(nll_posterior)
-        nl_loss_measurement = tf.reduce_mean(nll_likelihood)
-        nl_loss_pred = tf.reduce_mean(nll_pred)
+
         # compute the mode of the distribution
         mode_pose_posterior = self.compute_mode_(posterior_state)
         mode_pose_pred = self.compute_mode_(pred_state)
@@ -167,18 +168,18 @@ class S1ToyContext(base.BaseContext):
 
         if self.learned_process_model and self.learned_measurement_model:
             print("e2e")
-            total = nl_loss_posterior
+            total = nll_posterior
         elif self.learned_process_model and not self.learned_measurement_model:
             print("only process model")
-            total = nl_loss_pred
+            total = nll_pred
         elif not self.learned_process_model and self.learned_measurement_model:
             print("only measurement_model")
-            total = nl_loss_measurement
+            total = nll_likelihood
         else:
             print("not learning")
             total = 0
         # total = tf.reduce_mean(mse_obs) + wd
-        metrics = [total, nl_loss_posterior, nl_loss_measurement, ate_mode_post, ate_mode_pred, ate_mode_meas,
+        metrics = [total, nll_posterior, nll_likelihood, ate_mode_post, ate_mode_pred, ate_mode_meas,
                    mae_mode_post, mae_mode_pred, mae_mode_meas]
         metric_names = ["total", "nl_loss_posterior", "nl_loss_measurement", "ate_mode_post", "ate_mode_pred",
                         "ate_mode_meas",
@@ -280,6 +281,48 @@ class S1ToyContext(base.BaseContext):
     def analytical_model(self, value, noise):
         return tf.reshape(self.energy(value, noise), [self.batch_size, self.grid_size])
 
+    def create_and_save_datasets(self,starting_positions, trajectory_length, control_step, train_size,
+                                 val_size, test_size, file_path, name):
+        n_samples = train_size + val_size + test_size
+
+
+        if name == "simple_linear_data":
+            true_trajectories = np.ndarray((n_samples, trajectory_length))
+            measurements = np.ndarray((n_samples, trajectory_length))
+            for i in range(n_samples):
+                theta = starting_positions[i]  # starting position
+                for j in range(trajectory_length):
+                    true_trajectories[i][j] = theta % (2 * np.pi)
+                    measurements[i][j] = (theta + np.random.normal(0.0, self.measurement_noise, 1).item()) % (2 * np.pi)
+                    theta = theta + control_step
+            measurements_ = tf.expand_dims(tf.convert_to_tensor(measurements, dtype=tf.float32), 2)
+            ground_truth_ = tf.expand_dims(tf.convert_to_tensor(true_trajectories, dtype=tf.float32), 2)
+        elif name == "non_linear_data":
+            true_trajectories = np.ndarray((n_samples, trajectory_length))
+            measurements = np.ndarray((n_samples, trajectory_length,2))
+            for i in range(n_samples):
+                theta = starting_positions[i]  # starting position
+                for j in range(trajectory_length):
+                    true_trajectories[i][j] = theta % (2 * np.pi)
+                    measurements[i][j][0] = (theta + np.random.normal(0.0, self.measurement_noise, 1).item()) % (2 * np.pi)
+                    measurements[i][j][1] = (-theta + np.random.normal(0.0, self.measurement_noise, 1).item()) % (2 * np.pi)
+                    theta = theta + control_step
+            measurements_ = tf.convert_to_tensor(measurements, dtype=tf.float32)
+            ground_truth_ = tf.expand_dims(tf.convert_to_tensor(true_trajectories, dtype=tf.float32), 2)
+        else:
+            raise ValueError("The dataset name is not supported")
+        pdb.set_trace()
+        train_path = file_path + '/' + name + '_train_' + str(train_size) + '.tfrecord'
+        val_path = file_path + '/' + name + '_val_' + str(val_size) + '.tfrecord'
+        test_path = file_path + '/' + name + '_test_' + str(test_size) + '.tfrecord'
+        train_dataset = tf.data.Dataset.from_tensor_slices((measurements_[:train_size], ground_truth_[:train_size]))
+        val_dataset = tf.data.Dataset.from_tensor_slices(
+            (measurements_[train_size:train_size + val_size], ground_truth_[train_size:train_size + val_size]))
+        test_dataset = tf.data.Dataset.from_tensor_slices(
+            (measurements_[train_size + val_size:], ground_truth_[train_size + val_size:]))
+        write_tfrecord(train_path, train_dataset)
+        write_tfrecord(val_path, val_dataset)
+        write_tfrecord(test_path, test_dataset)
 
 class ObservationModel(tf.keras.Model):
     def __init__(self, batch_size, grid_size):
@@ -348,17 +391,17 @@ class ProcessModel(tf.keras.Model):
                 #kernel_initializer=tf.initializers.glorot_normal(),
                kernel_initializer='random_normal',
                bias_initializer='zeros',
-                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
                name='process_fc1'),
            tf.keras.layers.Dense(
                units=self.grid_size,
                activation=None,
-               # kernel_initializer=tf.initializers.glorot_normal(),
+               #kernel_initializer=tf.initializers.glorot_normal(),
                kernel_initializer='random_normal',
                bias_initializer='zeros',
-                kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
-                bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
+                #kernel_regularizer=tf.keras.regularizers.l2(l=1e-3),
+               # bias_regularizer=tf.keras.regularizers.l2(l=1e-3),
                 name='process_fc2'),
        ])
 

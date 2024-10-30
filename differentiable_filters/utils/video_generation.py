@@ -4,7 +4,7 @@ import argparse
 import pdb
 import re 
 
-def generate_video_from_images(image_folder, output_video, image_prefix, fps=30):
+def generate_video_from_images(image_folder, output_video_folder, image_prefix, fps=30):
     # Get list of images in the folder
     images = [img for img in os.listdir(image_folder) if img.startswith(image_prefix) and img.endswith(".png") or img.endswith(".jpg")]
     images.sort(key = lambda x: int(re.findall(r'\d+',x.split('_')[-1])[0]))
@@ -15,6 +15,7 @@ def generate_video_from_images(image_folder, output_video, image_prefix, fps=30)
 
     # Define the codec and create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # You can use other codecs like 'XVID'
+    output_video = os.path.join(output_video_folder, f"{image_prefix}.mp4")
     video = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
     for image in images:
