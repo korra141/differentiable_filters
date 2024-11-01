@@ -36,15 +36,14 @@ class HEFCell(base.FilterCellBase):
         It can be represented by an Integer, a TensorShape or a tuple of
         Integers or TensorShapes.
         """
-        # estimated state, its covariance, and the step number
+        # return [[1],[self.grid_size],[1]]
         return [[self.grid_size],[1]]
 
     @property
     def output_size(self):
         """Integer or TensorShape: size of outputs produced by this cell."""
-        # estimated state and covariance, observations, R, Q
-        return [[self.grid_size],[self.grid_size],[self.grid_size],[self.grid_size]]
-
+        # [[1],[1],[self.grid_size],[self.grid_size],[self.grid_size],[self.grid_size]]
+        return [[1],[1],[self.grid_size],[self.grid_size]]
     def call(self, inputs, states, training):
         """
         The function that contains the logic for one RNN step calculation.
@@ -71,38 +70,54 @@ class HEFCell(base.FilterCellBase):
         # turn off the '/rnn' name scope to improve summary logging
         with (tf.name_scope("")):
             # get the inputs
-            observations, control = inputs
+            observations, control,epoch = inputs
             # import pdb;pdb.set_trace()
-            energy_samples_old, step = states
+            prior, c_step = states
 
-            energy_samples_old = tf.reshape(energy_samples_old, [self.batch_size, self.grid_size])
+            # old_state = tf.reshape(old_state, [self.batch_size, -1])
             # predict the next state
-            process_energy_samples = self.context.run_process_model(energy_samples_old, control,training)
-            pred_state_eta,pred_state_energy = self._prediction_step(energy_samples_old,process_energy_samples)
+            process_energy_mean, process_energy_cov = self.context.run_process_model(control,epoch[0,0],training)
 
 
-            z_pred_energy = self.context.run_observation_model(pred_state_energy,observations,
-                                                           training=training)
+            process_energy = self.context.analytical_model(process_energy_mean, process_energy_cov)
+            pred_state_eta,pred_state_energy = self._prediction_step(prior,process_energy)
+
+
+            # z_pred_energy_mean,z_pred_energy_cov = self.context.run_observation_model(observations,epoch[0,0],
+            #                                                training)
+            # z_pred_energy = self.context.analytical_model(z_pred_energy_mean, z_pred_energy_cov)
 
 
             ###################################################################
             # update the predictions with the observations
-            state_up = self._update(pred_state_eta, z_pred_energy)
-            state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
-            z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
+            # state_up = self._update(pred_state_eta, z_pred_energy)
+            # state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
+            # z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
             pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
+            process_energy = tf.cast(tf.reshape(process_energy, [self.batch_size, -1]),dtype=tf.float64)
 
+            # mean_state = tf.expand_dims(tf.math.reduce_mean(state, axis=1),-1)
             # the recurrent state contains the updated state estimate
-            new_state = (state, step + 1)
+            new_state = (pred_state_energy, c_step + 1)
+            # new_state = (c_step[0] + 1)
+
+            # print(f" for the epoch {epoch[0,0]} the process energy mean is {tf.math.reduce_mean(process_energy_mean)} and the process energy covariance is {tf.math.reduce_mean(process_energy_cov)}")
+            print(f" for the epoch {epoch[0,0]} the observation energy mean is {tf.math.reduce_mean(process_energy_mean)} and the observation energy covariance is {tf.math.reduce_mean(process_energy_cov)}")
 
 
-            output = (state, z_pred_energy, pred_state_energy)
-
-            if tf.math.reduce_any(tf.math.is_nan(pred_state_energy)):
-                print("The process model is outputting nan")
+            # output = (process_energy_mean, z_pred_energy_mean, state, z_pred_energy, pred_state_energy,process_energy)
+            output = (process_energy_mean, process_energy_cov,process_energy,pred_state_energy)
 
 
             return output, new_state
+
+    def setting_layer_trainable(self, model,value):
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.Model):  # if you're using a model as a layer
+                self.setting_layer_trainable(layer,value)  # apply function recursively
+                continue
+            layer.get_layer("sequential").trainable = value
+
     def _prediction_step(self,energy_samples_old,process_energy_samples):
         ln_z_1 = self.calculate_normalisation_const(energy_samples_old)
         ln_z_2 = self.calculate_normalisation_const(process_energy_samples)
@@ -115,6 +130,7 @@ class HEFCell(base.FilterCellBase):
 
         m_conv = m1*m2
         # pdb.set_trace()
+        #Currently the moments are convolution are unnormlized and so are the outputs eta and energy
         eta, energy = self.convert_moments_eta_energy(m_conv)
 
         return eta, energy
@@ -135,10 +151,10 @@ class HEFCell(base.FilterCellBase):
 
     def convert_moments_eta_energy(self,moments):
         prob = tf.signal.irfft(moments)
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))),1)
+        # ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))),1)
         prob_real = tf.math.real(prob)
         prob_process = tf.where(prob_real>0,prob_real,1e-8)
-        energy = tf.math.log(prob_process) + ln_z_
+        energy = tf.math.log(prob_process)
         eta = tf.signal.rfft(energy)
         return eta,energy
 

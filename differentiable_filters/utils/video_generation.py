@@ -14,7 +14,7 @@ def generate_video_from_images(image_folder, output_video_folder, image_prefix, 
     height, width, layers = frame.shape
 
     # Define the codec and create VideoWriter object
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # You can use other codecs like 'XVID'
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')  # You can use other codecs like 'XVID '
     output_video = os.path.join(output_video_folder, f"{image_prefix}.mp4")
     video = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
@@ -26,6 +26,7 @@ def generate_video_from_images(image_folder, output_video_folder, image_prefix, 
     # Release the video writer object
     video.release()
     print(f"Video saved as {output_video}")
+    return output_video
 
 
 if __name__ == "__main__":
