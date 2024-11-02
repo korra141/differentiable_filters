@@ -167,7 +167,7 @@ def run_example(filter_type, out_dir, batch_size, grid_size, trajectory_length, 
                       "train_loss": train_loss}
         dict_epoch.update(dict_val)
         wandb.log(dict_epoch)
-
+    
     # print(model.summary())
 
     # test the trained model on the held out data
@@ -310,6 +310,7 @@ def evaluate(model, dataset, epoch,  type, batch_size, trajectory_length, contro
         mae_observation_mean = tf.math.abs(control - out[0])
         mae_observation_cov = tf.math.abs((tf.ones_like(out[1])*(motion_noise**2)) - out[1])
         if type == "test":
+            # pdb.set_trace()
             out_analytical_hef_ = out_analytical_hef(x_batch, y_batch)
             plotting_dict["hef_analytical"] = out_analytical_hef_
             loss_value_analytical, metrics_analytical, metric_names_analytical = \
@@ -550,7 +551,7 @@ def main():
                         default=30,
                         help='length of the training dataset')
     parser.add_argument('--initial_cov', dest='initial_cov', type=float,
-                        default=0.1,
+                        default=0.01,
                         help='noise around the starting state fed as a prior to the model')
     parser.add_argument('--epochs', dest='epochs', type=int,
                         default=30,

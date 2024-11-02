@@ -150,13 +150,14 @@ class HEFCell(base.FilterCellBase):
         return self.convert_from_eta_energy(eta_update)
 
     def convert_moments_eta_energy(self,moments):
-        prob = tf.signal.irfft(moments)
-        # ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))),1)
-        prob_real = tf.math.real(prob)
-        prob_process = tf.where(prob_real>0,prob_real,1e-8)
-        energy = tf.math.log(prob_process)
-        eta = tf.signal.rfft(energy)
-        return eta,energy
+        #pdb.set_trace()
+        unorm_prob = tf.signal.irfft(moments)
+        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))), 1)
+        unorm_prob_real = tf.math.real(unorm_prob)
+        unorm_prob_real = tf.where(unorm_prob_real > 0, unorm_prob_real, 1e-8)
+        norm_energy = tf.math.log(unorm_prob_real) - ln_z_
+        eta = tf.signal.rfft(norm_energy)
+        return eta,norm_energy
 
     def convert_from_eta_energy(self,eta):
         return tf.math.real(tf.signal.irfft(eta))
