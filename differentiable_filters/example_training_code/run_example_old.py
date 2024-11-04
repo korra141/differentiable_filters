@@ -318,7 +318,7 @@ class FilterApplication(tf.keras.Model):
         # -------------------------- (2) --------------------------------------
         # Instantiate the desired filter cell
         #----------------------------------------------------------------------
-        problem = 'simple'
+        x = 'simple'
         if filter_type == 'ekf':
             from differentiable_filters.filters import ekf_cell as ekf
             self.cell = ekf.EKFCell(self.context, problem, debug=debug)

@@ -43,7 +43,7 @@ class HEFCell(base.FilterCellBase):
     def output_size(self):
         """Integer or TensorShape: size of outputs produced by this cell."""
         # [[1],[1],[self.grid_size],[self.grid_size],[self.grid_size],[self.grid_size]]
-        return [[1],[1],[self.grid_size],[self.grid_size]]
+        return [[self.grid_size],[self.grid_size],[self.grid_size],[self.grid_size]]
     def call(self, inputs, states, training):
         """
         The function that contains the logic for one RNN step calculation.
@@ -70,16 +70,14 @@ class HEFCell(base.FilterCellBase):
         # turn off the '/rnn' name scope to improve summary logging
         with (tf.name_scope("")):
             # get the inputs
-            observations, control,epoch = inputs
+            observations = inputs
             # import pdb;pdb.set_trace()
             prior, c_step = states
 
             # old_state = tf.reshape(old_state, [self.batch_size, -1])
             # predict the next state
-            process_energy_mean, process_energy_cov = self.context.run_process_model(control,epoch[0,0],training)
+            process_energy= self.context.run_process_model(prior,training)
 
-
-            process_energy = self.context.analytical_model(process_energy_mean, process_energy_cov)
             pred_state_eta,pred_state_energy = self._prediction_step(prior,process_energy)
 
 
@@ -90,33 +88,33 @@ class HEFCell(base.FilterCellBase):
 
             ###################################################################
             # update the predictions with the observations
-            # state_up = self._update(pred_state_eta, z_pred_energy)
-            # state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
-            # z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
+            state_up = self._update(pred_state_eta, z_pred_energy)
+            state = tf.cast(tf.reshape(state_up, [self.batch_size, -1]),dtype=tf.float64)
+            z_pred_energy = tf.cast(tf.reshape(z_pred_energy, [self.batch_size, -1]),dtype=tf.float64)
             pred_state_energy = tf.cast(tf.reshape(pred_state_energy, [self.batch_size, -1]),dtype=tf.float64)
             process_energy = tf.cast(tf.reshape(process_energy, [self.batch_size, -1]),dtype=tf.float64)
 
             # mean_state = tf.expand_dims(tf.math.reduce_mean(state, axis=1),-1)
             # the recurrent state contains the updated state estimate
-            new_state = (pred_state_energy, c_step + 1)
+            new_state = (state, c_step + 1)
             # new_state = (c_step[0] + 1)
 
             # print(f" for the epoch {epoch[0,0]} the process energy mean is {tf.math.reduce_mean(process_energy_mean)} and the process energy covariance is {tf.math.reduce_mean(process_energy_cov)}")
-            print(f" for the epoch {epoch[0,0]} the observation energy mean is {tf.math.reduce_mean(process_energy_mean)} and the observation energy covariance is {tf.math.reduce_mean(process_energy_cov)}")
+            # print(f" for the epoch {epoch[0,0]} the observation energy mean is {tf.math.reduce_mean(process_energy_mean)} and the observation energy covariance is {tf.math.reduce_mean(process_energy_cov)}")
 
 
             # output = (process_energy_mean, z_pred_energy_mean, state, z_pred_energy, pred_state_energy,process_energy)
-            output = (process_energy_mean, process_energy_cov,process_energy,pred_state_energy)
+            output = (state,z_pred_energy,pred_state_energy,process_energy,)
 
 
             return output, new_state
 
-    def setting_layer_trainable(self, model,value):
-        for layer in model.layers:
-            if isinstance(layer, tf.keras.Model):  # if you're using a model as a layer
-                self.setting_layer_trainable(layer,value)  # apply function recursively
-                continue
-            layer.get_layer("sequential").trainable = value
+    # def setting_layer_trainable(self, model,value):
+    #     for layer in model.layers:
+    #         if isinstance(layer, tf.keras.Model):  # if you're using a model as a layer
+    #             self.setting_layer_trainable(layer,value)  # apply function recursively
+    #             continue
+    #         layer.get_layer("sequential").trainable = value
 
     def _prediction_step(self,energy_samples_old,process_energy_samples):
         ln_z_1 = self.calculate_normalisation_const(energy_samples_old)
@@ -125,8 +123,8 @@ class HEFCell(base.FilterCellBase):
         prob_1 = tf.math.exp(energy_samples_old - ln_z_1)
         prob_2 = tf.math.exp(process_energy_samples - ln_z_2)
 
-        m1 = tf.cast(tf.signal.rfft(prob_1),dtype=tf.complex64)
-        m2 = tf.cast(tf.signal.rfft(prob_2),dtype=tf.complex64)
+        m1 = tf.cast(tf.signal.rfftnd(prob_1,axes=-1),dtype=tf.complex64)
+        m2 = tf.cast(tf.signal.rfftnd(prob_2,axes=-1),dtype=tf.complex64)
 
         m_conv = m1*m2
         # pdb.set_trace()
@@ -138,9 +136,9 @@ class HEFCell(base.FilterCellBase):
 
     def calculate_normalisation_const(self,energy):
         # import pdb;pdb.set_trace()
-        maximum = tf.expand_dims(tf.math.reduce_max(energy, axis=1), 1)
-        moments = tf.signal.rfft(tf.exp(energy - maximum))
-        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))), 1) + maximum
+        maximum = tf.expand_dims(tf.math.reduce_max(energy, axis=-1), -1)
+        moments = tf.signal.rfftnd(tf.exp(energy - maximum),axes=-1)
+        ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))), -1) + maximum
 
         return ln_z_
 
@@ -151,19 +149,25 @@ class HEFCell(base.FilterCellBase):
 
     def convert_moments_eta_energy(self,moments):
         #pdb.set_trace()
-        unorm_prob = tf.signal.irfft(moments)
+        unorm_prob = tf.signal.irfftnd(moments,axes=-1)
         ln_z_ = tf.expand_dims(tf.math.real(tf.math.log(moments[:, 0] / (math.pi * self.grid_size * math.pi / 62))), 1)
         unorm_prob_real = tf.math.real(unorm_prob)
         unorm_prob_real = tf.where(unorm_prob_real > 0, unorm_prob_real, 1e-8)
         norm_energy = tf.math.log(unorm_prob_real) - ln_z_
-        eta = tf.signal.rfft(norm_energy)
+        eta = tf.signal.rfftnd(norm_energy,axes=-1)
         return eta,norm_energy
 
     def convert_from_eta_energy(self,eta):
-        return tf.math.real(tf.signal.irfft(eta))
+        # Normalise this
+        unnorm_energy = tf.math.real(tf.signal.irfftnd(eta,axes=-1))
+        ln_z_ = self.calculate_normalisation_const(unnorm_energy)
+        norm_energy = unnorm_energy - ln_z_
+        return norm_energy
+
+
 
     def convert_from_energy_eta(self,energy_samples):
-        eta = tf.signal.rfft(energy_samples)
+        eta = tf.signal.rfftnd(energy_samples,axes=-1)
         return eta
 
 

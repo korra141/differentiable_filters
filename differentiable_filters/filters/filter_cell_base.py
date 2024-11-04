@@ -7,7 +7,7 @@ import numpy as np
 import differentiable_filters.utils.tensorflow_compatability as compat
 
 
-class FilterCellBase(tf.keras.layers.AbstractRNNCell):
+class FilterCellBase(tf.keras.layers.Layer):
     def __init__(self, context, problem, update_rate=1, debug=False):
         """
         Abstract base class for Filter Cells
@@ -32,7 +32,7 @@ class FilterCellBase(tf.keras.layers.AbstractRNNCell):
         None.
 
         """
-        tf.keras.layers.AbstractRNNCell.__init__(self)
+        tf.keras.layers.Layer.__init__(self)
         self.context = context
         self.problem = problem
 
